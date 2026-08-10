@@ -1,5 +1,6 @@
 import { listProviders } from "@/lib/tts/registry";
 import type { VoiceRecord } from "@/lib/tts/types";
+import { getCustomVoice, listCustomVoices } from "@/lib/tts/custom-voices";
 
 /**
  * Voice catalog service.
@@ -33,6 +34,8 @@ export interface SearchOptions {
   provider?: string;
   limit?: number;
   offset?: number;
+  /** include this user's custom (cloned) voices */
+  ownerUserId?: string;
 }
 
 export interface SearchResult {
@@ -78,6 +81,11 @@ export async function searchVoices(opts: SearchOptions = {}): Promise<SearchResu
   const q = opts.q?.trim().toLowerCase();
   let voices = state.voices;
 
+  // append the caller's custom voices (owner-scoped)
+  if (opts.ownerUserId) {
+    voices = [...voices, ...listCustomVoices(opts.ownerUserId)];
+  }
+
   if (q) {
     voices = voices.filter(
       (v) =>
@@ -106,9 +114,17 @@ export async function searchVoices(opts: SearchOptions = {}): Promise<SearchResu
   return { voices: voices.slice(offset, offset + limit), total };
 }
 
-export async function getVoiceById(id: string): Promise<VoiceRecord | null> {
+export async function getVoiceById(
+  id: string,
+  ownerUserId?: string,
+): Promise<VoiceRecord | null> {
   await ensureLoaded();
-  return state.voices.find((v) => v.id === id) ?? null;
+  const stock = state.voices.find((v) => v.id === id);
+  if (stock) return stock;
+  if (ownerUserId) {
+    return getCustomVoice(id, ownerUserId);
+  }
+  return null;
 }
 
 export async function listLanguages(): Promise<string[]> {

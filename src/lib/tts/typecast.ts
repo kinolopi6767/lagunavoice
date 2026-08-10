@@ -178,9 +178,51 @@ export class TypecastProvider implements TtsProvider {
     };
   }
 
-  /** instant cloning — wired in M6 (needs consent capture + slot tracking) */
-  async clone(): Promise<string> {
-    throw new Error("Voice cloning ships with the M6 consent pipeline");
+  /**
+   * Instant cloning — POST /v1/voices/clone (multipart/form-data).
+   * Verified contract (research/07 B.1.1): file WAV/MP3 5–150s ≤25MB,
+   * name 1–30 chars, model ssfm-v21|v30 → { voice_id: "uc_…" }.
+   * Clones are bound to the model and speak every language it supports.
+   */
+  async clone(
+    sample: Buffer,
+    name: string,
+    opts?: { model?: "ssfm-v21" | "ssfm-v30"; language?: string },
+  ): Promise<string> {
+    const key = this.apiKey();
+    if (!key) throw new ProviderNotConfiguredError("Typecast");
+
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(sample)], { type: "audio/mpeg" }), "sample.mp3");
+    form.append("name", name.slice(0, 30));
+    form.append("model", opts?.model ?? "ssfm-v30");
+
+    const res = await fetch(`${API_BASE}/v1/voices/clone`, {
+      method: "POST",
+      headers: { "X-API-KEY": key },
+      body: form,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      console.error(`[typecast] clone ${res.status}: ${detail.slice(0, 300)}`);
+      throw new Error(`Voice cloning failed (${res.status})`);
+    }
+
+    const data = (await res.json()) as { voice_id?: string };
+    if (!data.voice_id) {
+      throw new Error("Typecast clone response missing voice_id");
+    }
+    return data.voice_id;
+  }
+
+  /** free a clone slot — DELETE /v1/voices/{voice_id} */
+  async deleteClone(voiceId: string): Promise<void> {
+    const res = await this.request(`/v1/voices/${voiceId}`, { method: "DELETE" });
+    if (!res.ok) {
+      console.error(`[typecast] deleteClone ${res.status}`);
+    }
   }
 
   async healthCheck(): Promise<boolean> {

@@ -70,7 +70,13 @@ export interface TtsProvider {
   /** streaming synthesis (Deepgram; others return undefined) */
   stream?(req: SynthesizeRequest): AsyncIterable<Buffer>;
   /** voice cloning (Typecast) */
-  clone?(sample: Buffer, name: string): Promise<string>;
+  clone?(
+    sample: Buffer,
+    name: string,
+    opts?: { model?: "ssfm-v21" | "ssfm-v30"; language?: string },
+  ): Promise<string>;
+  /** delete a cloned voice (Typecast) */
+  deleteClone?(voiceId: string): Promise<void>;
   /** hard provider limits (drives chunking/queues) */
   readonly maxCharsPerRequest: number;
   readonly maxConcurrent: number;

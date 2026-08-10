@@ -63,9 +63,22 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Voice must exist
-  const voice = await getVoiceById(voiceId);
+  // 2. Voice must exist (stock + the caller's custom clones)
+  let sessionUserId: string | undefined;
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase.auth.getUser();
+    if (data.user) sessionUserId = data.user.id;
+  } catch {
+    // Supabase not configured — stock voices only
+  }
+  const voice = await getVoiceById(voiceId, sessionUserId);
   if (!voice) {
+    return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
+  }
+
+  // cloned voices are owner-only
+  if (voice.isCustom && voice.ownerUserId !== sessionUserId) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
   }
 
@@ -106,26 +119,13 @@ export async function POST(request: Request) {
   }
 
   // 3b. Premium / flagship — session + credits required
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json(
-        { error: "Sign in to generate with premium voices.", code: "unauthorized" },
-        { status: 401 },
-      );
-    }
-    userId = user.id;
-  } catch {
-    // Supabase not configured yet — premium is locked, free voices keep working
+  if (!sessionUserId) {
     return NextResponse.json(
-      { error: "Premium billing is being configured — free voices work.", code: "billing_unavailable" },
-      { status: 503 },
+      { error: "Sign in to generate with premium voices.", code: "unauthorized" },
+      { status: 401 },
     );
   }
+  const userId = sessionUserId;
 
   const provider = getProvider(voice.provider);
   const generationId = crypto.randomUUID();
