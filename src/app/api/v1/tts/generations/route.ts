@@ -1,0 +1,114 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { verifyApiKey, hasScope, consumeIdempotencyKey, rateLimitCheck } from "@/lib/keys/store";
+import { getVoiceById } from "@/lib/tts/catalog";
+import { startGeneration } from "@/lib/generations/store";
+import { moderateText } from "@/lib/security/moderation";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { isBanned } from "@/lib/abuse/rules";
+
+/**
+ * POST /api/v1/tts/generations — developer API (async + poll).
+ *
+ * Auth: Authorization: Bearer lug_...
+ * Idempotency: Idempotency-Key header — replays return the original result
+ * (never double-charged). Rate limited per key (rpm).
+ *
+ * Body: { text, voice, style?, pitch?, rate? }
+ * Response 202: { id, status, estimatedCredits } → poll GET /api/v1/generations/:id
+ */
+
+const GenerationSchema = z.object({
+  text: z.string().min(1).max(10_000),
+  voice: z.string(),
+  style: z.string().max(32).optional(),
+  pitch: z.number().min(-12).max(12).optional(),
+  rate: z.number().min(0.5).max(2).optional(),
+});
+
+function bearerToken(request: Request): string | null {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Bearer ")) return null;
+  return header.slice(7).trim();
+}
+
+export async function POST(request: Request) {
+  // 1. API key auth
+  const token = bearerToken(request);
+  const record = token ? verifyApiKey(token) : null;
+  if (!record) {
+    return NextResponse.json({ error: "Missing or invalid API key.", code: "invalid_api_key" }, { status: 401 });
+  }
+  if (!hasScope(record, "tts:generate")) {
+    return NextResponse.json({ error: "This key cannot generate audio.", code: "forbidden" }, { status: 403 });
+  }
+  if (isBanned(record.userId)) {
+    return NextResponse.json({ error: "Account restricted.", code: "account_restricted" }, { status: 403 });
+  }
+
+  // 2. Rate limit
+  const limit = rateLimitCheck(record);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded.", code: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(limit.retryAfterMs / 1_000)) } },
+    );
+  }
+
+  // 3. Idempotency
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) {
+    const firstUse = consumeIdempotencyKey(`k:${record.id}:${idempotencyKey}`);
+    if (!firstUse) {
+      return NextResponse.json(
+        { error: "This Idempotency-Key was already used.", code: "idempotency_conflict" },
+        { status: 409 },
+      );
+    }
+  }
+
+  // 4. Validate body
+  const body = await request.json().catch(() => null);
+  const parsed = GenerationSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
+  }
+  const { text, voice: voiceId, style, pitch, rate } = parsed.data;
+
+  // 5. Moderation
+  const moderation = await moderateText(text);
+  if (moderation.verdict === "block") {
+    return NextResponse.json({ error: "This text can't be used.", code: "content_policy" }, { status: 400 });
+  }
+
+  // 6. Voice resolution + kill-switch
+  const voice = await getVoiceById(voiceId);
+  if (!voice) {
+    return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
+  }
+  const disabled = isProviderKillSwitched(voice.provider);
+  if (disabled) {
+    return NextResponse.json(
+      { error: "Voice engine temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // 7. Start generation
+  const generationId = `gen_${crypto.randomUUID().replaceAll("-", "")}`;
+  startGeneration({
+    id: generationId,
+    userId: record.userId,
+    voice,
+    text,
+    style,
+    pitch,
+    rate,
+    tag: `${record.userId}:api:${record.id}`,
+  });
+
+  return NextResponse.json(
+    { id: generationId, status: "processing", estimatedCredits: Array.from(text).length * (voice.tier === "flagship" ? 2 : 1) },
+    { status: 202 },
+  );
+}

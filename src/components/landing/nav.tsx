@@ -15,8 +15,8 @@ export function Nav() {
         <nav className="hidden items-center gap-5 text-sm text-muted-foreground sm:flex">
           <Link href="/voices" className="hover:text-foreground">Voice library</Link>
           <Link href="/studio" className="hover:text-foreground">Studio</Link>
+          <Link href="/developers" className="hover:text-foreground">Developers</Link>
           <a href="#pricing" className="hover:text-foreground">Pricing</a>
-          <a href="#faq" className="hover:text-foreground">FAQ</a>
         </nav>
 
         <div className="flex items-center gap-2">

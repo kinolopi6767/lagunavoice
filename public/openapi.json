@@ -1,0 +1,115 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "LugunaVoice API",
+    "version": "1.0.0",
+    "description": "Text-to-speech for developers. Free (Edge TTS), premium (Typecast) and flagship (Deepgram) voices with async generation, idempotent billing, streaming and voice cloning."
+  },
+  "servers": [{ "url": "https://api.lugunavoice.com/v1" }],
+  "security": [{ "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "GenerationRequest": {
+        "type": "object",
+        "required": ["text", "voice"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 10000, "description": "Text to synthesize (up to 10,000 chars; longer text is chunked)" },
+          "voice": { "type": "string", "description": "Voice id from GET /voices (fs_voice_...)" },
+          "style": { "type": "string", "enum": ["neutral", "cheerful", "calm", "serious", "excited"], "description": "Emotion/style preset (mapped per engine)" },
+          "pitch": { "type": "number", "minimum": -12, "maximum": 12, "description": "Semitones" },
+          "rate": { "type": "number", "minimum": 0.5, "maximum": 2, "description": "Speaking speed multiplier" }
+        }
+      },
+      "Generation": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["processing", "completed", "failed"] },
+          "voice": { "type": "string" },
+          "provider": { "type": "string", "enum": ["edge", "typecast", "deepgram"] },
+          "tier": { "type": "string", "enum": ["free", "premium", "flagship"] },
+          "textLength": { "type": "integer" },
+          "creditsCharged": { "type": "integer" },
+          "audioBase64": { "type": "string", "description": "MP3 audio, base64 (present when completed)" },
+          "mimeType": { "type": "string" },
+          "durationMs": { "type": "integer" },
+          "error": { "type": "string" }
+        }
+      },
+      "Voice": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "provider": { "type": "string" },
+          "modelVersion": { "type": "string" },
+          "name": { "type": "string" },
+          "language": { "type": "string" },
+          "gender": { "type": "string" },
+          "tier": { "type": "string", "enum": ["free", "premium", "flagship"] },
+          "useCases": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "code": { "type": "string", "enum": ["invalid_api_key", "forbidden", "rate_limited", "idempotency_conflict", "invalid_request", "content_policy", "not_found", "voice_engine_unavailable", "insufficient_credits", "account_restricted"] }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/tts/generations": {
+      "post": {
+        "summary": "Create a generation (async — poll by id)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenerationRequest" } } }
+        },
+        "parameters": [
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" }, "description": "Send the same key on retries to avoid double-charging" }
+        ],
+        "responses": {
+          "202": { "description": "Accepted", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "status": { "type": "string" }, "estimatedCredits": { "type": "integer" } } } } } },
+          "401": { "description": "Invalid API key", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Idempotency conflict" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
+    "/tts/generations/{id}": {
+      "get": {
+        "summary": "Poll a generation until completed",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Generation state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Generation" } } } },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/voices": {
+      "get": {
+        "summary": "List the voice catalog",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "language", "in": "query", "schema": { "type": "string" } },
+          { "name": "tier", "in": "query", "schema": { "type": "string", "enum": ["free", "premium", "flagship"] } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 60 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Catalog page", "content": { "application/json": { "schema": { "type": "object", "properties": { "voices": { "type": "array", "items": { "$ref": "#/components/schemas/Voice" } }, "total": { "type": "integer" } } } } } }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "summary": "Account, key info, balance and recent ledger",
+        "responses": { "200": { "description": "Account snapshot" } }
+      }
+    }
+  }
+}

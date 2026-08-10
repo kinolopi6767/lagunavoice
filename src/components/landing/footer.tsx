@@ -17,15 +17,16 @@ export function Footer() {
           </div>
           <div className="space-y-2">
             <p className="font-medium text-foreground">Account</p>
-            <a href="/login" className="block hover:text-foreground">Sign in</a>
-            <a href="/signup" className="block hover:text-foreground">Create account</a>
-            <a href="/developers" className="block hover:text-foreground">API docs</a>
+            <Link href="/login" className="block hover:text-foreground">Sign in</Link>
+            <Link href="/signup" className="block hover:text-foreground">Create account</Link>
+            <Link href="/api-keys" className="block hover:text-foreground">API keys</Link>
+            <Link href="/referrals" className="block hover:text-foreground">Referrals</Link>
           </div>
           <div className="space-y-2">
-            <p className="font-medium text-foreground">Company</p>
-            <a href="/about" className="block hover:text-foreground">About</a>
-            <a href="/contact" className="block hover:text-foreground">Contact</a>
-            <a href="/privacy" className="block hover:text-foreground">Privacy</a>
+            <p className="font-medium text-foreground">Developers</p>
+            <Link href="/developers" className="block hover:text-foreground">API docs</Link>
+            <Link href="/api-keys" className="block hover:text-foreground">API keys</Link>
+            <Link href="/openapi.json" className="block hover:text-foreground">OpenAPI spec</Link>
           </div>
         </nav>
       </div>
