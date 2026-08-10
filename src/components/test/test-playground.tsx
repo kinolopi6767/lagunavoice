@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,14 +12,19 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { DEMO_VOICES, DEMO_STYLES } from "@/lib/tts/demo-voices";
+import { Skeleton } from "@/components/ui/skeleton";
+import { DEMO_VOICES } from "@/lib/tts/demo-voices";
 
 /**
- * Local test playground — exercises the whole API surface without a DB:
- *  - sandbox session (enter/exit), unlocks session-gated endpoints
- *  - API keys saved to the BROWSER (localStorage) for testing /api/v1/*
- *  - TTS: studio, long-form, streaming, landing demo, v1 async
- *  - credits: balance + manual check-out order (confirmable in /admin)
+ * Local test playground — mirrors the Studio dashboard layout.
+ *
+ * 1  Environment & sandbox session (no Supabase → cookie user + test credits)
+ * 2  Developer API keys — platform: the LugunaVoice v1 API (/api/v1/*), same
+ *    key store as /api-keys; keys are sent as `Authorization: Bearer lug_...`.
+ *    Keys created here are saved to THIS BROWSER (localStorage) for testing.
+ * 3  TTS dashboard (Studio-style): voice picker + script panel, five engines
+ * 4  Credits & payments (manual flow)
+ * 5  Related pages
  */
 
 interface SavedKey {
@@ -26,6 +32,15 @@ interface SavedKey {
   name: string;
   key: string;
   savedAt: number;
+}
+
+interface ServerKey {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  scopes: string[];
+  rateLimitRpm: number;
+  revokedAt?: string;
 }
 
 interface DevStatus {
@@ -43,8 +58,21 @@ interface VoiceOption {
   gender?: string | null;
 }
 
+type Mode = "studio" | "longform" | "stream" | "demo" | "v1";
+
+interface TtsResult {
+  kind: "audio" | "error";
+  label?: string;
+  audioUrl?: string;
+  srt?: string;
+  json?: string;
+  text?: string;
+  meta?: string;
+}
+
 const STORE_KEY = "lv_saved_keys";
 const MAX_TEST_CHARS = 4_000;
+const STYLES = ["neutral", "cheerful", "calm", "serious", "excited"];
 
 function loadSavedKeys(): SavedKey[] {
   try {
@@ -61,13 +89,19 @@ function persistSavedKeys(keys: SavedKey[]) {
 }
 
 export function TestPlayground() {
-  const [status, setStatus] = useState<DevStatus | null>(null);
+  // 1 ─ environment + sandbox
+  const [env, setEnv] = useState<{ loading: boolean; status: DevStatus | null }>({
+    loading: true,
+    status: null,
+  });
   const [sandboxName, setSandboxName] = useState("");
   const [sandboxMsg, setSandboxMsg] = useState<string | null>(null);
   const [sandboxErr, setSandboxErr] = useState<string | null>(null);
   const [sandboxCode, setSandboxCode] = useState<string | null>(null);
 
+  // 2 ─ keys
   const [savedKeys, setSavedKeys] = useState<SavedKey[]>(() => loadSavedKeys());
+  const [serverKeys, setServerKeys] = useState<ServerKey[]>([]);
   const [newKeyName, setNewKeyName] = useState("");
   const [manualKey, setManualKey] = useState("");
   const [manualKeyName, setManualKeyName] = useState("");
@@ -75,28 +109,23 @@ export function TestPlayground() {
   const [keysMsg, setKeysMsg] = useState<string | null>(null);
   const [keysErr, setKeysErr] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [verifyOut, setVerifyOut] = useState<string | null>(null);
 
+  // 3 ─ TTS
   const [voices, setVoices] = useState<VoiceOption[]>([]);
-  const [voicesErr, setVoicesErr] = useState<string | null>(null);
-  const [mode, setMode] = useState<"studio" | "longform" | "stream" | "demo" | "v1">("studio");
-  const [text, setText] = useState("Welcome to LugunaVoice. Type a sentence here and hit generate to hear it spoken.");
-  const [voiceId, setVoiceId] = useState("");
+  const [query, setQuery] = useState("");
+  const [voiceId, setVoiceId] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("studio");
+  const [text, setText] = useState(
+    "Welcome to LugunaVoice. Type a sentence here and hit generate to hear it spoken.",
+  );
   const [style, setStyle] = useState("neutral");
   const [rate, setRate] = useState(1);
   const [pitch, setPitch] = useState(0);
+  const [ttsStatus, setTtsStatus] = useState<"idle" | "busy" | "ready" | "error">("idle");
+  const [ttsResult, setTtsResult] = useState<TtsResult | null>(null);
 
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{
-    kind: "audio" | "json" | "error";
-    label?: string;
-    audioSrc?: string;
-    audioMime?: string;
-    srt?: string;
-    json?: string;
-    text?: string;
-  } | null>(null);
-
-  // credits / payments
+  // 4 ─ credits / payments
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceMsg, setBalanceMsg] = useState<string | null>(null);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
@@ -107,42 +136,72 @@ export function TestPlayground() {
     [savedKeys, activeKeyId],
   );
 
+  // ── env + server keys + voices (all fetch-based; no sync setState) ──
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/dev/session")
       .then((res) => (res.ok ? (res.json() as Promise<DevStatus>) : null))
       .then((d) => {
-        if (!cancelled && d) setStatus(d);
+        if (!cancelled) setEnv({ loading: false, status: d });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setEnv({ loading: false, status: null });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
   useEffect(() => {
-    if (!voices.length && !voicesErr) {
-      fetch("/api/voices?limit=100&tier=free")
-        .then((res) => (res.ok ? (res.json() as Promise<{ voices: VoiceOption[] }>) : null))
-        .then((d) => {
-          if (d?.voices?.length) {
-            setVoices(d.voices);
-            setVoiceId((prev) => prev || d.voices[0]?.id || "");
-          }
-        })
-        .catch(() => setVoicesErr("Could not load voices."));
-    }
-  }, [voices.length, voicesErr]);
+    fetch("/api/voices?limit=100&tier=free")
+      .then((res) => (res.ok ? (res.json() as Promise<{ voices: VoiceOption[] }>) : null))
+      .then((d) => {
+        if (d?.voices?.length) {
+          setVoices(d.voices);
+          setVoiceId((prev) => prev ?? d.voices[0].id);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/keys")
+      .then((res) => (res.ok ? (res.json() as Promise<{ keys: ServerKey[] }>) : null))
+      .then((d) => {
+        if (d?.keys) setServerKeys(d.keys);
+      })
+      .catch(() => undefined);
+  }, [env.status?.sandbox]);
 
   const selectableVoices = useMemo(() => {
-    if (mode === "demo") return DEMO_VOICES.map((v) => ({ id: v.id, name: v.name, provider: v.provider, tier: v.tier, language: v.language, gender: v.gender }));
+    if (mode === "demo") {
+      return DEMO_VOICES.map((v) => ({
+        id: v.id,
+        name: v.name,
+        provider: v.provider,
+        tier: v.tier,
+        language: v.language,
+        gender: v.gender,
+      }));
+    }
     return voices;
   }, [mode, voices]);
 
+  const filteredVoices = useMemo(
+    () => selectableVoices.filter((v) => v.name.toLowerCase().includes(query.toLowerCase())),
+    [selectableVoices, query],
+  );
+
   const effectiveVoiceId = useMemo(() => {
     if (selectableVoices.some((v) => v.id === voiceId)) return voiceId;
-    return selectableVoices[0]?.id ?? "";
+    return selectableVoices[0]?.id ?? null;
   }, [selectableVoices, voiceId]);
+
+  const charsLeft = MAX_TEST_CHARS - Array.from(text).length;
+  const noDeepgram = mode === "stream" && !voices.some((v) => v.provider === "deepgram");
+
+  // ── 1 ────────────────────────────────────────────────────────────────
 
   async function enterSandbox() {
     setSandboxErr(null);
@@ -158,9 +217,9 @@ export function TestPlayground() {
       setSandboxErr(data?.error ?? "Could not enter sandbox mode.");
       return;
     }
-    setStatus({ supabaseConfigured: false, sandbox: true, userId: data.userId });
+    setEnv({ loading: false, status: { supabaseConfigured: false, sandbox: true, userId: data.userId } });
     setSandboxMsg(`Sandbox user ${data.userId} active — 2,000 test credits granted.`);
-    setSandboxCode(data.referralCode ?? null);
+    setSandboxCode((data.referralCode as string | null) ?? null);
   }
 
   async function exitSandbox() {
@@ -169,12 +228,16 @@ export function TestPlayground() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "exit" }),
     });
-    setStatus((s) => (s ? { ...s, sandbox: false, userId: undefined } : s));
+    setEnv((e) => ({
+      loading: false,
+      status: e.status ? { ...e.status, sandbox: false, userId: undefined } : e.status,
+    }));
     setSandboxMsg("Sandbox session ended (cookie cleared).");
     setSandboxCode(null);
+    setServerKeys([]);
   }
 
-  // ---------- API keys (browser-local) ----------
+  // ── 2 ────────────────────────────────────────────────────────────────
 
   function saveKeyLocally(key: SavedKey) {
     const next = [key, ...savedKeys.filter((k) => k.id !== key.id)];
@@ -186,7 +249,8 @@ export function TestPlayground() {
   async function createKey() {
     setKeysErr(null);
     setKeysMsg(null);
-    if (!status?.sandbox) {
+    setVerifyOut(null);
+    if (!env.status?.sandbox) {
       setKeysErr("Enter sandbox mode first — key creation needs a session (or sign in on the deployed app).");
       return;
     }
@@ -201,8 +265,11 @@ export function TestPlayground() {
       setKeysErr(data?.error ?? "Could not create key.");
       return;
     }
+    const scopes = (data.record?.scopes as string[] | undefined) ?? ["tts:generate", "voices:read"];
     saveKeyLocally({ id: data.record?.id ?? `local-${Date.now()}`, name, key: data.key, savedAt: Date.now() });
-    setKeysMsg(`Key "${name}" created and saved to this browser (localStorage). Full key shown once — tap to copy.`);
+    setKeysMsg(
+      `Key "${name}" created, saved to this browser, and already selected below. Send it to /api/v1/* as "Authorization: Bearer ${data.key.slice(0, 10)}…". Scopes: ${scopes.join(", ")}.`,
+    );
     setNewKeyName("");
   }
 
@@ -210,12 +277,12 @@ export function TestPlayground() {
     setKeysErr(null);
     const key = manualKey.trim();
     if (!key.startsWith("lug_")) {
-      setKeysErr("Key must start with lug_ (create one above, or paste from a previous run).");
+      setKeysErr("Keys start with lug_ — create one in this card, or paste one from a previous run.");
       return;
     }
     const name = manualKeyName.trim() || "imported";
     saveKeyLocally({ id: `local-${Date.now()}`, name, key, savedAt: Date.now() });
-    setKeysMsg(`Key "${name}" saved to this browser.`);
+    setKeysMsg(`Key "${name}" saved to this browser (localStorage only — nothing leaves your machine).`);
     setManualKey("");
     setManualKeyName("");
   }
@@ -224,6 +291,7 @@ export function TestPlayground() {
     const next = savedKeys.filter((k) => k.id !== id);
     setSavedKeys(next);
     persistSavedKeys(next);
+    if (activeKey?.id === id) setVerifyOut(null);
   }
 
   async function copyKey(id: string, full: string) {
@@ -231,24 +299,41 @@ export function TestPlayground() {
     try {
       await navigator.clipboard.writeText(full);
     } catch {
-      // clipboard unavailable — key stays visible for manual copy
+      // key stays visible for manual copy
     }
   }
 
-  // ---------- TTS ----------
-
-  async function runTts() {
-    setBusy(true);
-    setResult(null);
-    const trim = text.trim();
-    if (!trim) {
-      setResult({ kind: "error", text: "Enter some text first." });
-      setBusy(false);
+  async function verifyKey(key: SavedKey) {
+    setVerifyOut(null);
+    const res = await fetch("/api/v1/me", { headers: { authorization: `Bearer ${key.key}` } });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.creditsBalance === undefined) {
+      setVerifyOut(`Verification failed (${res.status}): ${data?.error ?? "bad response"} — check the key or the sandbox session.`);
       return;
     }
+    const led = (data.recentLedger as Array<{ type: string; amount: number; description?: string; createdAt: number }> | undefined)?.slice(0, 3) ?? [];
+    setVerifyOut(
+      [
+        `Platform: LugunaVoice Developer API (v1) — key "${key.name}"`,
+        `Scopes: ${(data.key?.scopes ?? []).join(", ") || "—"} · Rate limit: ${data.key?.rateLimitRpm ?? "—"} rpm`,
+        `Credits balance: ${data.creditsBalance.toLocaleString()}`,
+        led.length
+          ? `Recent ledger: ${led.map((e) => `${e.type} ${e.amount > 0 ? "+" : ""}${e.amount}`).join(" · ")}`
+          : "Recent ledger: (empty)",
+      ].join("\n"),
+    );
+  }
+
+  // ── 3 ────────────────────────────────────────────────────────────────
+
+  async function generate() {
+    if (!effectiveVoiceId || !text.trim()) return;
+    setTtsStatus("busy");
+    setTtsResult(null);
+    const trim = text.trim();
     if (trim.length > MAX_TEST_CHARS) {
-      setResult({ kind: "error", text: `Text too long (${trim.length} chars, max ${MAX_TEST_CHARS} for tests).` });
-      setBusy(false);
+      setTtsStatus("ready");
+      setTtsResult({ kind: "error", text: `Text too long (${trim.length} chars, max ${MAX_TEST_CHARS} for tests).` });
       return;
     }
 
@@ -261,14 +346,16 @@ export function TestPlayground() {
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.audioBase64) {
-          setResult({ kind: "error", text: `Studio (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
-          return;
+          setTtsResult({ kind: "error", text: `Studio (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
+        } else {
+          const bytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
+          setTtsResult({
+            kind: "audio",
+            label: `Studio · ${data.tier ?? ""} · ${data.charCount ?? trim.length} chars`,
+            meta: data.creditsCharged ? `${data.creditsCharged} credits charged` : "free (no credits)",
+            audioUrl: URL.createObjectURL(new Blob([bytes], { type: data.mimeType ?? "audio/mpeg" })),
+          });
         }
-        setResult({
-          kind: "audio",
-          label: `Studio · ${data.tier ?? ""} · ${data.charCount ?? ""} chars · ${data.creditsCharged ?? 0} credits`,
-          audioSrc: `data:${data.mimeType ?? "audio/mpeg"};base64,${data.audioBase64}`,
-        });
       } else if (mode === "longform") {
         const res = await fetch("/api/studio/longform", {
           method: "POST",
@@ -277,114 +364,126 @@ export function TestPlayground() {
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.jobId) {
-          setResult({ kind: "error", text: `Long-form (${res.status}): ${data?.error ?? "no job returned"} [${data?.code ?? ""}]` });
-          return;
-        }
-        // poll
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 1_500));
-          const poll = await fetch(`/api/studio/longform/${data.jobId}`);
-          const job = await poll.json().catch(() => null);
-          if (job?.status === "completed" && job?.audioBase64) {
-            setResult({
-              kind: "audio",
-              label: `Long-form · ${job.chunks ?? "?"} chunks`,
-              audioSrc: `data:audio/mpeg;base64,${job.audioBase64}`,
-              srt: job.srt ?? undefined,
-            });
-            return;
+          setTtsResult({ kind: "error", text: `Long-form (${res.status}): ${data?.error ?? "no job returned"} [${data?.code ?? ""}]` });
+        } else {
+          for (let i = 0; i < 60; i++) {
+            await new Promise((r) => setTimeout(r, 1_500));
+            const poll = await fetch(`/api/studio/longform/${data.jobId}`);
+            const job = await poll.json().catch(() => null);
+            if (job?.status === "completed" && job?.audioBase64) {
+              const bytes = Uint8Array.from(atob(job.audioBase64), (c) => c.charCodeAt(0));
+              setTtsResult({
+                kind: "audio",
+                label: `Long-form · ${trim.length} chars`,
+                meta: "MP3 + SRT subtitles ready",
+                audioUrl: URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" })),
+                srt: job.srt ?? undefined,
+              });
+              setTtsStatus("ready");
+              return;
+            }
+            if (job?.status === "failed") {
+              setTtsResult({ kind: "error", text: `Long-form failed: ${job.error ?? "unknown"}` });
+              setTtsStatus("ready");
+              return;
+            }
           }
-          if (job?.status === "failed") {
-            setResult({ kind: "error", text: `Long-form failed: ${job.error ?? "unknown"}` });
-            return;
-          }
+          setTtsResult({ kind: "error", text: "Long-form job timed out after ~90s (still processing server-side — check /admin or retry)." });
         }
-        setResult({ kind: "error", text: "Long-form job timed out after ~90s (still processing server-side — check /admin or retry)." });
       } else if (mode === "stream") {
         const res = await fetch("/api/studio/stream", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: trim, voiceId: effectiveVoiceId, rate: Math.min(1.5, Math.max(0.7, rate)), pronunciations: undefined }),
+          body: JSON.stringify({
+            text: trim,
+            voiceId: effectiveVoiceId,
+            rate: Math.min(1.5, Math.max(0.7, rate)),
+          }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
-          setResult({ kind: "error", text: `Stream (${res.status}): ${data?.error ?? "stream failed"} [${data?.code ?? ""}]` });
-          return;
+          setTtsResult({ kind: "error", text: `Stream (${res.status}): ${data?.error ?? "stream failed"} [${data?.code ?? ""}]` });
+        } else {
+          const blob = await res.blob();
+          const credits = res.headers.get("x-lv-credits") ?? "0";
+          setTtsResult({
+            kind: "audio",
+            label: `Stream · ${trim.length} chars`,
+            meta: credits === "0" ? "guest free preview" : `${credits} credits (2/char, refunded on failure)`,
+            audioUrl: URL.createObjectURL(blob),
+          });
         }
-        const blob = await res.blob();
-        const credits = res.headers.get("x-lv-credits") ?? "0";
-        setResult({
-          kind: "audio",
-          label: `Stream · ${trim.length} chars · ${credits === "0" ? "free preview" : `${credits} credits`}`,
-          audioSrc: URL.createObjectURL(blob),
-          audioMime: res.headers.get("content-type") ?? "audio/mpeg",
-        });
       } else if (mode === "demo") {
         const res = await fetch("/api/landing/demo", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: trim, voice: effectiveVoiceId, style, turnstileToken: undefined }),
+          body: JSON.stringify({ text: trim, voice: effectiveVoiceId, style }),
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.audioBase64) {
-          setResult({ kind: "error", text: `Demo (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
-          return;
+          setTtsResult({ kind: "error", text: `Demo (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
+        } else {
+          const bytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
+          setTtsResult({
+            kind: "audio",
+            label: `Landing demo · ${trim.length} chars`,
+            meta: data.remaining !== undefined ? `${data.remaining} demo generations left today` : undefined,
+            audioUrl: URL.createObjectURL(new Blob([bytes], { type: data.mimeType ?? "audio/mpeg" })),
+          });
         }
-        setResult({
-          kind: "audio",
-          label: `Landing demo · ${data.remaining ?? "?"} demo generations left today`,
-          audioSrc: `data:${data.mimeType ?? "audio/mpeg"};base64,${data.audioBase64}`,
-        });
       } else if (mode === "v1") {
         if (!activeKey) {
-          setResult({ kind: "error", text: "Select a saved API key first (Keys card → create one, it saves automatically)." });
-          return;
-        }
-        const res = await fetch("/api/v1/tts/generations", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${activeKey.key}` },
-          body: JSON.stringify({ text: trim, voice: effectiveVoiceId, style, pitch, rate }),
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok || !data?.id) {
-          setResult({ kind: "error", text: `v1 (${res.status}): ${data?.error ?? "no generation returned"} [${data?.code ?? ""}]` });
-          return;
-        }
-        for (let i = 0; i < 40; i++) {
-          await new Promise((r) => setTimeout(r, 1_000));
-          const poll = await fetch(`/api/v1/generations/${data.id}`, {
-            headers: { authorization: `Bearer ${activeKey.key}` },
+          setTtsResult({ kind: "error", text: "v1 API mode needs a key — create one in the API keys card (it saves to this browser automatically)." });
+        } else {
+          const res = await fetch("/api/v1/tts/generations", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${activeKey.key}` },
+            body: JSON.stringify({ text: trim, voice: effectiveVoiceId, style, pitch, rate }),
           });
-          const gen = await poll.json().catch(() => null);
-          if (gen?.status === "completed" && gen?.audioBase64) {
-            setResult({
-              kind: "audio",
-              label: `v1 API · gen_${data.id.slice(0, 8)} · ${gen.creditsCharged ?? 0} credits`,
-              audioSrc: `data:${gen.mimeType ?? "audio/mpeg"};base64,${gen.audioBase64}`,
-              json: JSON.stringify(gen, null, 2),
-            });
-            return;
-          }
-          if (gen?.status === "failed") {
-            setResult({ kind: "error", text: `v1 generation failed: ${gen.error ?? "unknown"}` });
-            return;
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data?.id) {
+            setTtsResult({ kind: "error", text: `v1 (${res.status}): ${data?.error ?? "no generation returned"} [${data?.code ?? ""}]` });
+          } else {
+            for (let i = 0; i < 40; i++) {
+              await new Promise((r) => setTimeout(r, 1_000));
+              const poll = await fetch(`/api/v1/generations/${data.id}`, {
+                headers: { authorization: `Bearer ${activeKey.key}` },
+              });
+              const gen = await poll.json().catch(() => null);
+              if (gen?.status === "completed" && gen?.audioBase64) {
+                const bytes = Uint8Array.from(atob(gen.audioBase64), (c) => c.charCodeAt(0));
+                setTtsResult({
+                  kind: "audio",
+                  label: `v1 API · ${data.id.slice(0, 14)}`,
+                  meta: `${gen.creditsCharged ?? 0} credits · key "${activeKey.name}"`,
+                  audioUrl: URL.createObjectURL(new Blob([bytes], { type: gen.mimeType ?? "audio/mpeg" })),
+                  json: JSON.stringify(gen, null, 2),
+                });
+                setTtsStatus("ready");
+                return;
+              }
+              if (gen?.status === "failed") {
+                setTtsResult({ kind: "error", text: `v1 generation failed: ${gen.error ?? "unknown"} (refunded automatically)` });
+                setTtsStatus("ready");
+                return;
+              }
+            }
+            setTtsResult({ kind: "error", text: "v1 generation timed out (still processing server-side)." });
           }
         }
-        setResult({ kind: "error", text: "v1 generation timed out (still processing server-side)." });
       }
     } catch (err) {
-      setResult({ kind: "error", text: `Request failed: ${(err as Error).message}` });
-    } finally {
-      setBusy(false);
+      setTtsResult({ kind: "error", text: `Request failed: ${(err as Error).message}` });
     }
+    setTtsStatus("ready");
   }
 
-  // ---------- credits / payments ----------
+  // ── 4 ────────────────────────────────────────────────────────────────
 
   async function fetchBalance() {
     setBalanceMsg(null);
     if (!activeKey) {
-      setBalanceMsg("Need a saved API key — create one in the Keys card.");
+      setBalanceMsg("Need a saved API key — create one in the API keys card.");
       return;
     }
     const res = await fetch("/api/v1/me", { headers: { authorization: `Bearer ${activeKey.key}` } });
@@ -394,7 +493,7 @@ export function TestPlayground() {
       return;
     }
     setBalance(data.creditsBalance);
-    setBalanceMsg(`Balance via "${activeKey.name}": ${data.creditsBalance.toLocaleString()} credits.`);
+    setBalanceMsg(`Balance via "Authorization: Bearer ${activeKey.key.slice(0, 8)}…": ${data.creditsBalance.toLocaleString()} credits.`);
   }
 
   async function createTestOrder() {
@@ -417,319 +516,439 @@ export function TestPlayground() {
     );
   }
 
-  // ---------- UI ----------
+  // ── render ──────────────────────────────────────────────────────────
+
+  const sandboxActive = env.status?.sandbox;
 
   return (
-    <div className="space-y-6">
-      {/* Sandbox session */}
-      <Card>
-        <CardHeader>
-          <CardTitle>1 · Sandbox session</CardTitle>
-          <CardDescription>
-            Supabase not configured? Enter sandbox mode — a cookie acts as your signed-in user so
-            premium voices, API keys, referrals and checkout all work (in-memory). Sign in on the
-            real app instead when auth is configured.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {status?.supabaseConfigured ? (
-            <p className="text-sm">
-              Real authentication is configured (Supabase env vars present) — sandbox cookie is inactive.
-              Use the normal <a className="underline" href="/login">sign-in</a> or <a className="underline" href="/studio">studio</a>.
-            </p>
-          ) : (
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="sandbox-name">Name (optional — used for referral code)</Label>
-                <Input id="sandbox-name" value={sandboxName} onChange={(e) => setSandboxName(e.target.value)} placeholder="e.g. tester" className="w-56" />
-              </div>
-              {!status?.sandbox ? (
-                <Button onClick={enterSandbox}>Enter sandbox</Button>
+    <>
+      {/* 1 · Environment + sandbox session */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">1 · Environment &amp; sandbox session</h2>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Environment</CardTitle>
+            <CardDescription>
+              No database or Supabase configured? Enter sandbox mode — a cookie acts as your
+              signed-in user so premium voices, API keys, referrals and checkout all work on
+              in-memory stores. Signs in normally once auth is configured.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {env.loading ? (
+                <>
+                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-6 w-32" />
+                </>
               ) : (
-                <Button variant="outline" onClick={exitSandbox}>Exit sandbox</Button>
+                <>
+                  <Badge variant={env.status?.supabaseConfigured ? "default" : "outline"}>
+                    {env.status?.supabaseConfigured ? "Supabase: configured" : "Auth: not configured"}
+                  </Badge>
+                  <Badge variant={sandboxActive ? "default" : "outline"}>
+                    {sandboxActive ? `Sandbox active · ${env.status?.userId?.slice(0, 12)}…` : "Sandbox: off"}
+                  </Badge>
+                  <Badge variant={env.status?.supabaseConfigured ? "secondary" : "outline"}>
+                    {env.status?.supabaseConfigured ? "DB: real sessions" : "State: in-memory (no database)"}
+                  </Badge>
+                </>
               )}
-              {status?.sandbox && (
-                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600">
-                  active: {status.userId?.slice(0, 14)}…
+              {!env.loading && !env.status?.supabaseConfigured && (
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Input
+                    value={sandboxName}
+                    onChange={(e) => setSandboxName(e.target.value)}
+                    placeholder="sandbox name (referral code)"
+                    className="h-8 w-56"
+                  />
+                  {!sandboxActive ? (
+                    <Button size="sm" onClick={enterSandbox}>Enter sandbox</Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={exitSandbox}>Exit sandbox</Button>
+                  )}
                 </span>
               )}
             </div>
-          )}
-          {sandboxCode && status?.sandbox && (
-            <p className="text-sm">
-              Your referral code: <code className="rounded bg-muted px-1.5 py-0.5">{sandboxCode}</code> — open a
-              second browser (or exit + re-enter) to claim it in{" "}
-              <a className="underline" href="/referrals">/referrals</a>.
-            </p>
-          )}
-          {sandboxMsg && <p className="text-sm text-emerald-600">{sandboxMsg}</p>}
-          {sandboxErr && <p className="text-sm text-destructive">{sandboxErr}</p>}
-        </CardContent>
-      </Card>
 
-      {/* API keys — browser-local */}
-      <Card>
-        <CardHeader>
-          <CardTitle>2 · API keys (saved in this browser)</CardTitle>
-          <CardDescription>
-            Create a key with the sandbox session (or sign-in session) — it is stored in
-            localStorage only, for testing /api/v1/* locally. Never commit these keys.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="key-name">Key name</Label>
-              <Input id="key-name" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="test-key" className="w-44" />
-            </div>
-            <Button onClick={createKey}>Create & save to browser</Button>
-          </div>
+            {sandboxCode && sandboxActive && (
+              <p className="text-sm">
+                Your referral code:{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5">{sandboxCode}</code> — exit, enter
+                again (second code), then claim it in{" "}
+                <a className="underline" href="/referrals">/referrals</a>.
+              </p>
+            )}
+            {sandboxMsg && <p className="text-sm text-emerald-600">{sandboxMsg}</p>}
+            {sandboxErr && <p className="text-sm text-destructive">{sandboxErr}</p>}
+          </CardContent>
+        </Card>
+      </section>
 
-          <div className="flex flex-wrap items-end gap-3 border-t pt-4">
-            <div className="space-y-1">
-              <Label htmlFor="manual-key">Or paste an existing lug_ key</Label>
-              <Input id="manual-key" value={manualKey} onChange={(e) => setManualKey(e.target.value)} placeholder="lug_…" className="w-64 font-mono text-xs" />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="manual-key-name">Name</Label>
-              <Input id="manual-key-name" value={manualKeyName} onChange={(e) => setManualKeyName(e.target.value)} placeholder="imported" className="w-32" />
-            </div>
-            <Button variant="outline" onClick={addManualKey}>Save key</Button>
-          </div>
-
-          {keysMsg && <p className="text-sm text-emerald-600">{keysMsg}</p>}
-          {keysErr && <p className="text-sm text-destructive">{keysErr}</p>}
-
-          {savedKeys.length > 0 && (
-            <div className="space-y-2 border-t pt-4">
-              <p className="text-sm font-medium">Saved keys (localStorage)</p>
-              {savedKeys.map((k) => (
-                <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                  <button
-                    type="button"
-                    onClick={() => setActiveKeyId(k.id)}
-                    className="flex items-center gap-2 text-left"
-                    title="Use for v1 calls"
-                  >
-                    <span
-                      className={`size-2 rounded-full ${activeKey?.id === k.id ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-                    />
-                    <span className="font-medium">{k.name}</span>
-                  </button>
-                  <code className="font-mono text-xs text-muted-foreground">
-                    {revealed === k.id ? k.key : `${k.key.slice(0, 12)}…${k.key.slice(-4)}`}
-                  </code>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(k.savedAt).toLocaleString()}
-                  </span>
-                  <div className="ml-auto flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => copyKey(k.id, k.key)}>
-                      {revealed === k.id ? "copy" : "reveal"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => removeKey(k.id)}>
-                      remove
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* TTS playground */}
-      <Card>
-        <CardHeader>
-          <CardTitle>3 · TTS playground</CardTitle>
-          <CardDescription>
-            All five endpoints: Studio quick, Long-form (SRT), Stream, Landing demo, and the v1
-            developer API (uses the active key above).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {(
-              [
-                ["studio", "Studio"],
-                ["longform", "Long-form"],
-                ["stream", "Stream"],
-                ["demo", "Demo"],
-                ["v1", "v1 API"],
-              ] as const
-            ).map(([m, label]) => (
-              <Button
-                key={m}
-                size="sm"
-                variant={mode === m ? "default" : "outline"}
-                onClick={() => setMode(m)}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          {mode === "stream" && !voices.some((v) => v.provider === "deepgram") && (
-            <p className="text-sm text-amber-600">
-              Streaming needs a flagship (Deepgram Aura) voice — Aura voices appear here once{" "}
-              <code className="rounded bg-muted px-1">DEEPGRAM_API_KEY</code> is set. Without it,
-              stream requests fail gracefully (503/404) — that failure path is part of the test.
-            </p>
-          )}
-          {mode === "v1" && !activeKey && (
-            <p className="text-sm text-amber-600">v1 API mode needs a key — create one in card 2 (it saves to this browser automatically).</p>
-          )}
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="tts-text">Text ({text.length}/{MAX_TEST_CHARS})</Label>
-              <textarea
-                id="tts-text"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={6}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="space-y-3">
+      {/* 2 · Developer API keys */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">2 · Developer API keys (platform: LugunaVoice v1 API)</h2>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">API keys</CardTitle>
+            <CardDescription>
+              These are the /api/v1/* developer keys — the same key store as the{" "}
+              <a className="underline" href="/api-keys">/api-keys</a> dashboard. Send them as{" "}
+              <code className="rounded bg-muted px-1">Authorization: Bearer lug_…</code> to{" "}
+              <code className="rounded bg-muted px-1">/api/v1/tts/generations</code>,{" "}
+              <code className="rounded bg-muted px-1">/api/v1/voices</code>,{" "}
+              <code className="rounded bg-muted px-1">/api/v1/generations/:id</code>,{" "}
+              <code className="rounded bg-muted px-1">/api/v1/me</code>. Keys created here are
+              saved to this browser (localStorage) for testing — they are not written to any server
+              store.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1">
-                <Label>Voice ({mode === "demo" ? "demo set" : "free voices"})</Label>
-                {selectableVoices.length ? (
-                  <select
-                    value={effectiveVoiceId}
-                    onChange={(e) => setVoiceId(e.target.value)}
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                <Label htmlFor="key-name">New key name</Label>
+                <Input id="key-name" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="test-key" className="w-44" />
+              </div>
+              <Button onClick={createKey}>Create v1 API key &amp; save to browser</Button>
+              {serverKeys.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {serverKeys.length} key{serverKeys.length === 1 ? "" : "s"} live on the server
+                  (in-memory) — same store as /api-keys.
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 border-t pt-4">
+              <div className="space-y-1">
+                <Label htmlFor="manual-key">Or paste an existing lug_ key</Label>
+                <Input id="manual-key" value={manualKey} onChange={(e) => setManualKey(e.target.value)} placeholder="lug_…" className="w-64 font-mono text-xs" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="manual-key-name">Name</Label>
+                <Input id="manual-key-name" value={manualKeyName} onChange={(e) => setManualKeyName(e.target.value)} placeholder="imported" className="w-32" />
+              </div>
+              <Button variant="outline" onClick={addManualKey}>Save key (browser only)</Button>
+            </div>
+
+            {keysMsg && <p className="text-sm text-emerald-600">{keysMsg}</p>}
+            {keysErr && <p className="text-sm text-destructive">{keysErr}</p>}
+
+            {savedKeys.length > 0 && (
+              <div className="space-y-2 border-t pt-4">
+                <p className="text-sm font-medium">Keys available in this browser</p>
+                {savedKeys.map((k) => {
+                  const serverMatch = serverKeys.find((s) => s.id === k.id);
+                  return (
+                    <div key={k.id} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveKeyId(k.id);
+                          setVerifyOut(null);
+                        }}
+                        className="flex items-center gap-2 text-left"
+                        title="Use this key for v1 calls in card 3"
+                      >
+                        <span className={`size-2 rounded-full ${activeKey?.id === k.id ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                        <span className="font-medium">{k.name}</span>
+                      </button>
+                      <Badge variant="secondary">browser (localStorage)</Badge>
+                      {serverMatch && <Badge variant="outline">also on server</Badge>}
+                      <code className="font-mono text-xs text-muted-foreground">
+                        {revealed === k.id ? k.key : `${k.key.slice(0, 12)}…${k.key.slice(-4)}`}
+                      </code>
+                      <span className="text-xs text-muted-foreground">
+                        {serverMatch ? `scopes: ${serverMatch.scopes.join(", ")} · ${serverMatch.rateLimitRpm} rpm` : "stored locally only"}
+                      </span>
+                      <div className="ml-auto flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => copyKey(k.id, k.key)}>
+                          {revealed === k.id ? "copy" : "reveal"}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => verifyKey(k)}>
+                          verify
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => removeKey(k.id)}>
+                          remove
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {verifyOut && (
+                  <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs">{verifyOut}</pre>
+                )}
+                {activeKey && (
+                  <div className="rounded-md border bg-muted/30 p-3 font-mono text-xs">
+                    <p className="text-muted-foreground"># sample request using the active key</p>
+                    <p>{`curl -X POST http://localhost:3000/api/v1/tts/generations \\`}</p>
+                    <p>{`  -H "Authorization: Bearer ${activeKey.key.slice(0, 10)}…" \\`}</p>
+                    <p>{`  -H "Content-Type: application/json" \\`}</p>
+                    <p>{`  -d '{"text":"Hello","voice":"${effectiveVoiceId ?? "fs_voice_edge_en-US-AriaNeural"}"}'`}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* 3 · TTS dashboard (Studio layout) */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">3 · TTS — quick generation &amp; long-form</h2>
+        <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+          {/* voice column */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Voice</CardTitle>
+              <CardDescription>
+                {mode === "demo"
+                  ? "Landing demo set (no account needed)"
+                  : mode === "stream"
+                    ? "Streaming works only with flagship (Deepgram Aura) voices"
+                    : "Free voices — premium unlocks with credits"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Input placeholder="Search voices…" value={query} onChange={(e) => setQuery(e.target.value)} />
+              {voices.length === 0 && mode !== "demo" ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (
+                <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
+                  {filteredVoices.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setVoiceId(v.id)}
+                      className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                        effectiveVoiceId === v.id ? "border-primary bg-primary/10" : "hover:bg-muted"
+                      }`}
+                    >
+                      <span className="block truncate font-medium">{v.name}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {v.language ?? "—"} · {v.gender ?? "—"} · {v.provider}
+                      </span>
+                    </button>
+                  ))}
+                  {filteredVoices.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No voices match {`"${query}"`}.</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* script column */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Script &amp; engine</CardTitle>
+              <CardDescription>Same dashboard as Studio — extended with all five engines:</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["studio", "Studio"],
+                    ["longform", "Long-form"],
+                    ["stream", "Stream"],
+                    ["demo", "Demo"],
+                    ["v1", "v1 API"],
+                  ] as const
+                ).map(([m, label]) => (
+                  <Button
+                    key={m}
+                    size="sm"
+                    variant={mode === m ? "default" : "outline"}
+                    onClick={() => setMode(m)}
                   >
-                    {selectableVoices.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name} · {v.language ?? "?"} · {v.gender ?? "?"}
+                    {label}
+                  </Button>
+                ))}
+              </div>
+
+              {mode === "v1" && savedKeys.length > 0 && (
+                <div className="space-y-1">
+                  <Label>v1 API key (sent as Authorization header)</Label>
+                  <select
+                    value={activeKey?.id ?? ""}
+                    onChange={(e) => {
+                      setActiveKeyId(e.target.value);
+                      setVerifyOut(null);
+                    }}
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  >
+                    {savedKeys.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {k.name} · {k.key.slice(0, 12)}…
                       </option>
                     ))}
                   </select>
-                ) : (
-                  <p className="text-sm text-muted-foreground">{voicesErr ?? "Loading voices…"}</p>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label>Style</Label>
-                <select
-                  value={style}
-                  onChange={(e) => setStyle(e.target.value)}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                >
-                  {DEMO_STYLES.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <Label>Rate: {rate.toFixed(2)}×</Label>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={2}
-                  step={0.05}
-                  value={rate}
-                  onChange={(e) => setRate(Number(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Pitch: {pitch > 0 ? `+${pitch}` : pitch}</Label>
-                <input
-                  type="range"
-                  min={-12}
-                  max={12}
-                  step={1}
-                  value={pitch}
-                  onChange={(e) => setPitch(Number(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-            </div>
-          </div>
+                </div>
+              )}
+              {noDeepgram && mode === "stream" && (
+                <p className="text-sm text-amber-600">
+                  Aura voices appear here once <code className="rounded bg-muted px-1">DEEPGRAM_API_KEY</code> is set —
+                  without it, stream requests fail gracefully (503/404). That failure path is part of the test.
+                </p>
+              )}
 
-          <Button onClick={runTts} disabled={busy}>
-            {busy ? "Working…" : `Generate via ${mode}`}
-          </Button>
+              <div className="space-y-2">
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  maxLength={MAX_TEST_CHARS}
+                  rows={7}
+                  placeholder="Write or paste your script here…"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                />
+                <p className={`text-right text-xs ${charsLeft <= 100 ? "text-destructive" : "text-muted-foreground"}`}>
+                  {charsLeft.toLocaleString()} characters left
+                </p>
+              </div>
 
-          {result && (
-            <div className="space-y-2 rounded-md border p-4">
-              {result.kind === "error" ? (
-                <p className="text-sm text-destructive">{result.text}</p>
-              ) : (
-                <>
-                  {result.label && <p className="text-sm font-medium">{result.label}</p>}
-                  {result.audioSrc && (
-                    <audio controls src={result.audioSrc} className="w-full" />
-                  )}
-                  {result.srt && (
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Style</Label>
+                  <select
+                    value={style}
+                    onChange={(e) => setStyle(e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  >
+                    {STYLES.map((s) => (
+                      <option key={s} value={s}>
+                        {s[0].toUpperCase() + s.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="test-rate">Speed ({rate.toFixed(2)}×)</Label>
+                  <input
+                    id="test-rate"
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={rate}
+                    onChange={(e) => setRate(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="test-pitch">Pitch ({pitch > 0 ? "+" : ""}{pitch}st)</Label>
+                  <input
+                    id="test-pitch"
+                    type="range"
+                    min={-12}
+                    max={12}
+                    step={1}
+                    value={pitch}
+                    onChange={(e) => setPitch(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              {ttsStatus === "busy" ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-2/3" />
+                  <p className="text-xs text-muted-foreground">Synthesizing…</p>
+                </div>
+              ) : null}
+
+              {ttsResult?.kind === "audio" && ttsStatus === "ready" ? (
+                <div className="rounded-md border bg-muted/40 p-3">
+                  {ttsResult.label && <p className="text-sm font-medium">{ttsResult.label}</p>}
+                  {ttsResult.meta && <p className="text-xs text-muted-foreground">{ttsResult.meta}</p>}
+                  <audio controls src={ttsResult.audioUrl} className="mt-1 w-full" />
+                  {ttsResult.srt && (
                     <a
-                      className="inline-block text-sm text-primary underline"
-                      href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.srt)}`}
+                      className="mt-2 inline-block text-sm text-primary underline"
+                      href={`data:text/plain;charset=utf-8,${encodeURIComponent(ttsResult.srt)}`}
                       download="subtitles.srt"
                     >
                       Download SRT subtitles
                     </a>
                   )}
-                  {result.json && (
-                    <details>
-                      <summary className="cursor-pointer text-sm text-muted-foreground">Raw response</summary>
-                      <pre className="mt-2 max-h-64 overflow-auto rounded bg-muted p-3 text-xs">{result.json}</pre>
+                  {ttsResult.json && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-muted-foreground">Raw response</summary>
+                      <pre className="mt-1 max-h-64 overflow-auto rounded bg-background p-2 text-xs">{ttsResult.json}</pre>
                     </details>
                   )}
-                </>
-              )}
+                </div>
+              ) : null}
+
+              {ttsResult?.kind === "error" && ttsStatus === "ready" ? (
+                <p className="text-sm text-destructive">{ttsResult.text}</p>
+              ) : null}
+
+              <Button
+                onClick={generate}
+                disabled={ttsStatus === "busy" || !effectiveVoiceId || !text.trim()}
+                className="w-full"
+              >
+                {ttsStatus === "busy" ? "Generating…" : `Generate via ${mode}`}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* 4 · Credits & payments */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">4 · Credits &amp; payments (manual flow)</h2>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Billing</CardTitle>
+            <CardDescription>
+              Check your balance through the v1 API, and create a test purchase. Without Razorpay
+              the order lands as manual_pending — confirm it in /admin to see the ledger credit
+              land (and card 3&apos;s premium billing to start charging).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={fetchBalance}>Check balance (/api/v1/me)</Button>
+              <Button variant="outline" onClick={createTestOrder}>Create test order (Starter pack)</Button>
+              <Button variant="ghost" size="sm" asChild>
+                <a href="/admin" target="_blank" rel="noreferrer">Open /admin → confirm order →</a>
+              </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            {balance !== null && <p className="text-sm">Balance: <span className="font-medium">{balance.toLocaleString()}</span> credits.</p>}
+            {balanceMsg && <p className="text-sm text-emerald-600">{balanceMsg}</p>}
+            {orderMsg && <p className="text-sm text-emerald-600">{orderMsg}</p>}
+            {orderErr && <p className="text-sm text-destructive">{orderErr}</p>}
+          </CardContent>
+        </Card>
+      </section>
 
-      {/* Credits & payments */}
-      <Card>
-        <CardHeader>
-          <CardTitle>4 · Credits & payments (manual flow)</CardTitle>
-          <CardDescription>
-            Check your balance via the developer API, and create a test purchase. Without Razorpay
-            the order lands as manual_pending — confirm it in /admin to see the ledger credit.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={fetchBalance}>Check balance (/api/v1/me)</Button>
-            <Button variant="outline" onClick={createTestOrder}>Create test order (Starter pack)</Button>
-            <Button variant="ghost" size="sm" asChild>
-              <a href="/admin" target="_blank" rel="noreferrer">Open /admin → confirm order →</a>
-            </Button>
-          </div>
-          {balance !== null && <p className="text-sm">Balance: <span className="font-medium">{balance.toLocaleString()}</span> credits.</p>}
-          {balanceMsg && <p className="text-sm text-emerald-600">{balanceMsg}</p>}
-          {orderMsg && <p className="text-sm text-emerald-600">{orderMsg}</p>}
-          {orderErr && <p className="text-sm text-destructive">{orderErr}</p>}
-        </CardContent>
-      </Card>
-
-      {/* quick links */}
-      <Card>
-        <CardHeader>
-          <CardTitle>5 · Related pages</CardTitle>
-          <CardDescription>Every flow is testable locally (guests or sandbox session).</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {[
-            ["/studio", "Studio (free TTS)"],
-            ["/voices", "Voice library + previews"],
-            ["/voice-cloning", "Voice cloning"],
-            ["/api-keys", "API keys dashboard"],
-            ["/referrals", "Referrals"],
-            ["/developers", "Developer docs"],
-            ["/admin", "Admin dashboard"],
-            ["/openapi.json", "OpenAPI spec"],
-          ].map(([href, label]) => (
-            <Button key={href} variant="outline" size="sm" asChild>
-              <a href={href}>{label}</a>
-            </Button>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+      {/* 5 · Related pages */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">5 · Related pages</h2>
+        <Card>
+          <CardContent className="flex flex-wrap gap-2 pt-6">
+            {[
+              ["/studio", "Studio (free TTS)"],
+              ["/voices", "Voice library + previews"],
+              ["/voice-cloning", "Voice cloning"],
+              ["/api-keys", "API keys dashboard"],
+              ["/referrals", "Referrals"],
+              ["/developers", "Developer docs"],
+              ["/admin", "Admin dashboard"],
+              ["/openapi.json", "OpenAPI spec"],
+            ].map(([href, label]) => (
+              <Button key={href} variant="outline" size="sm" asChild>
+                <a href={href}>{label}</a>
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
+    </>
   );
 }
