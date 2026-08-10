@@ -39,6 +39,10 @@ export interface SynthesizeRequest {
   pitch?: number;
   /** 0.5..2.0 */
   rate?: number;
+  /** per-request usage tag (Deepgram `tag=lv:...` for COGS reporting) */
+  tag?: string;
+  /** inline pronunciation overrides (Deepgram IPA; ignored elsewhere) */
+  pronunciations?: Array<{ word: string; pronounce: string }>;
 }
 
 export interface SynthesizeResult {
