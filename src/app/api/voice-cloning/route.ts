@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import ffmpegStatic from "ffmpeg-static";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import { getProvider } from "@/lib/tts/registry";
 import {
   cloneAttemptsRemaining,
@@ -71,18 +71,14 @@ function clientIp(request: Request): string {
 }
 
 export async function POST(request: Request) {
-  // 1. Authenticated user required
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
+  // 1. Authenticated user required (real session, or sandbox cookie without Supabase)
+  const { userId, supabaseConfigured } = await resolveSession();
+  if (!userId) {
+    if (supabaseConfigured) {
       return NextResponse.json({ error: "Sign in to clone voices.", code: "unauthorized" }, { status: 401 });
     }
-    userId = data.user.id;
-  } catch {
     return NextResponse.json(
-      { error: "Voice cloning is being configured — try again soon.", code: "billing_unavailable" },
+      { error: "Voice cloning is being configured — try again soon, or use the local test playground.", code: "billing_unavailable" },
       { status: 503 },
     );
   }

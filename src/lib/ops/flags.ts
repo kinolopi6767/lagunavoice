@@ -4,7 +4,7 @@
  * Also carries the daily spend guard (research/08 §D).
  */
 
-import { recordProviderUsage } from "@/lib/costs/store";
+import { usageSummary } from "@/lib/costs/store";
 
 interface ProviderOps {
   enabled: boolean;
@@ -37,11 +37,15 @@ export function listProviderOps(): Array<{ provider: string; enabled: boolean; r
   }));
 }
 
-/** spend guard: true when today's spend for a provider is under the cap */
+/**
+ * Spend guard: true when today's recorded cost for a provider is under the
+ * daily cap. Uses the in-memory COGS store until the DB table is wired
+ * (costs accrue on completion, so the check gates the NEXT request).
+ */
 export async function providerWithinSpendCap(provider: string): Promise<boolean> {
-  const today = await recordProviderUsage(provider, 0, 0); // cheap touch for today's row
-  void today;
-  return true; // enforcement lands with the DB-backed cost store (M7.5)
+  const { today } = await usageSummary();
+  const row = today.find((r) => r.provider === provider);
+  return (row?.costCents ?? 0) < DAILY_SPEND_CAP_CENTS;
 }
 
 export const SPEND_CAP_CENTS = DAILY_SPEND_CAP_CENTS;

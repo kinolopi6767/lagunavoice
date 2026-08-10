@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import { getPack, getPlan } from "@/lib/pricing/packs";
 import { createOrder, setOrderRef } from "@/lib/payments/orders";
 import { createPaymentLink, RazorpayNotConfiguredError } from "@/lib/payments/razorpay";
@@ -20,20 +20,15 @@ const CheckoutSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  // user session required
-  let userId: string;
+  // user session required (real session, or sandbox cookie without Supabase)
+  const { userId, supabaseConfigured } = await resolveSession();
   let email: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
+  if (!userId) {
+    if (supabaseConfigured) {
       return NextResponse.json({ error: "Sign in to buy credits.", code: "unauthorized" }, { status: 401 });
     }
-    userId = data.user.id;
-    email = data.user.email ?? undefined;
-  } catch {
     return NextResponse.json(
-      { error: "Payments are being configured — try again soon.", code: "billing_unavailable" },
+      { error: "Payments are being configured — try again soon, or use the local test playground.", code: "billing_unavailable" },
       { status: 503 },
     );
   }

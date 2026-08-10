@@ -4,8 +4,8 @@ import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
 import { startLongFormJob } from "@/lib/tts/longform";
-import { createClient } from "@/lib/supabase/server";
-import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { resolveSession } from "@/lib/sandbox/session";
+import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 import { recordProviderUsage } from "@/lib/costs/store";
 import {
   BillingUnavailableError,
@@ -47,6 +47,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
   }
 
+  // session for owner-scoped voice resolution (real session, or sandbox cookie)
+  const session = await resolveSession();
+
   const { text, voiceId, style, pitch, rate } = parsed.data;
   const charCount = Array.from(text).length;
 
@@ -55,8 +58,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "This text can't be used.", code: "content_policy" }, { status: 400 });
   }
 
-  const voice = await getVoiceById(voiceId);
+  const voice = await getVoiceById(voiceId, session.userId);
   if (!voice) {
+    return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
+  }
+  if (voice.isCustom && voice.ownerUserId !== session.userId) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
   }
 
@@ -65,6 +71,14 @@ export async function POST(request: Request) {
   if (disabled) {
     return NextResponse.json(
       { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // daily spend guard (COGS)
+  if (!(await providerWithinSpendCap(voice.provider))) {
+    return NextResponse.json(
+      { error: "This voice engine has reached its daily spend limit.", code: "voice_engine_unavailable" },
       { status: 503 },
     );
   }
@@ -90,15 +104,11 @@ export async function POST(request: Request) {
   }
 
   // ---------- premium / flagship ----------
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
+  const { userId, supabaseConfigured } = session;
+  if (!userId) {
+    if (supabaseConfigured) {
       return NextResponse.json({ error: "Sign in to use premium voices.", code: "unauthorized" }, { status: 401 });
     }
-    userId = data.user.id;
-  } catch {
     return NextResponse.json(
       { error: "Premium billing is being configured — free voices work.", code: "billing_unavailable" },
       { status: 503 },

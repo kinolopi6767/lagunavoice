@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { getProvider } from "@/lib/tts/registry";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { getPreview, setPreview } from "@/lib/cache/preview";
-import { createClient } from "@/lib/supabase/server";
-import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { resolveSession } from "@/lib/sandbox/session";
+import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 
 export const dynamic = "force-dynamic";
 
@@ -32,14 +32,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  let ownerUserId: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (data.user) ownerUserId = data.user.id;
-  } catch {
-    // guests can preview stock voices only
-  }
+  const { userId: ownerUserId } = await resolveSession();
 
   const voice = await getVoiceById(id, ownerUserId);
   if (!voice) {
@@ -62,6 +55,14 @@ export async function GET(
   if (disabled) {
     return NextResponse.json(
       { error: "Voice engine temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // daily spend guard (COGS)
+  if (!(await providerWithinSpendCap(voice.provider))) {
+    return NextResponse.json(
+      { error: "Voice engine daily spend limit reached.", code: "voice_engine_unavailable" },
       { status: 503 },
     );
   }

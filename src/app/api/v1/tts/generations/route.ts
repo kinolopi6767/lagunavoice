@@ -4,7 +4,7 @@ import { verifyApiKey, hasScope, consumeIdempotencyKey, rateLimitCheck } from "@
 import { getVoiceById } from "@/lib/tts/catalog";
 import { startGeneration } from "@/lib/generations/store";
 import { moderateText } from "@/lib/security/moderation";
-import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 import { isBanned } from "@/lib/abuse/rules";
 import { InsufficientCreditsError, debitCredits, refundCredits } from "@/lib/credits/ledger";
 import { recordProviderUsage } from "@/lib/costs/store";
@@ -92,6 +92,14 @@ export async function POST(request: Request) {
   if (disabled) {
     return NextResponse.json(
       { error: "Voice engine temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // daily spend guard (COGS)
+  if (!(await providerWithinSpendCap(voice.provider))) {
+    return NextResponse.json(
+      { error: "Voice engine daily spend limit reached.", code: "voice_engine_unavailable" },
       { status: 503 },
     );
   }

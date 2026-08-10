@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import { revokeApiKey } from "@/lib/keys/store";
 
 /**
@@ -11,15 +11,8 @@ export async function DELETE(
 ) {
   const { id } = await params;
 
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-    userId = data.user.id;
-  } catch {
-    return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-  }
+  const { userId } = await resolveSession();
+  if (!userId) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
 
   const revoked = revokeApiKey(id, userId);
   if (!revoked) {

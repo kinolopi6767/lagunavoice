@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { searchVoices, listLanguages, catalogStats } from "@/lib/tts/catalog";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 
 /**
  * GET /api/voices — public voice catalog (search + filters + pagination).
@@ -14,14 +14,7 @@ export async function GET(request: Request) {
   const offset = Math.max(Number(searchParams.get("offset") ?? 0) || 0, 0);
 
   // resolve the caller's custom voices (guests see none)
-  let ownerUserId: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (data.user) ownerUserId = data.user.id;
-  } catch {
-    // Supabase not configured — guests only
-  }
+  const { userId: ownerUserId } = await resolveSession();
 
   try {
     const [result, languages, stats] = await Promise.all([

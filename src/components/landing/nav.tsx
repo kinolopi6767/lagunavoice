@@ -20,6 +20,9 @@ export function Nav() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/test" className="text-muted-foreground">Test locally</Link>
+          </Button>
           <Button variant="outline" size="sm" asChild>
             <Link href="/login">Sign in</Link>
           </Button>

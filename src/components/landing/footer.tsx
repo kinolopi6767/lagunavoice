@@ -27,6 +27,7 @@ export function Footer() {
             <Link href="/developers" className="block hover:text-foreground">API docs</Link>
             <Link href="/api-keys" className="block hover:text-foreground">API keys</Link>
             <Link href="/openapi.json" className="block hover:text-foreground">OpenAPI spec</Link>
+            <Link href="/test" className="block hover:text-foreground">Local test playground</Link>
           </div>
         </nav>
       </div>

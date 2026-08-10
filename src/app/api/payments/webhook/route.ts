@@ -25,7 +25,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature.", code: "invalid_signature" }, { status: 400 });
   }
 
-  const event = parseRazorpayEvent(rawBody);
+  let event: ReturnType<typeof parseRazorpayEvent>;
+  try {
+    event = parseRazorpayEvent(rawBody);
+  } catch (err) {
+    console.error("[webhook] malformed event body", err);
+    return NextResponse.json({ error: "Invalid event body.", code: "invalid_request" }, { status: 400 });
+  }
 
   // dedupe replays
   if (hasWebhookProcessed(event.id)) {

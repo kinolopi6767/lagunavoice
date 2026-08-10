@@ -10,6 +10,7 @@ import {
   memoryLedgerHistory,
   type LedgerEntry,
 } from "@/lib/credits/memory-store";
+import { SIGNUP_BONUS_CREDITS } from "@/lib/pricing/packs";
 
 /**
  * Credit ledger — the money path.
@@ -40,13 +41,33 @@ export class BillingUnavailableError extends Error {
 
 const dbConfigured = () => Boolean(process.env.DATABASE_URL);
 
+/**
+ * Run the Postgres path, falling back to the in-memory store when the
+ * connection fails (misconfigured/unreachable DATABASE_URL). Keeps the app
+ * usable locally and in demos instead of 500ing on every billing call.
+ */
+async function withFallback<T>(label: string, dbPath: () => Promise<T>, memPath: () => T): Promise<T> {
+  try {
+    return await dbPath();
+  } catch (err) {
+    console.error(`[ledger] ${label}: DB path failed, falling back to memory`, err);
+    return memPath();
+  }
+}
+
 export async function getBalance(userId: string): Promise<number> {
   if (!dbConfigured()) return memoryGetBalance(userId);
-  const [row] = await db
-    .select({ balance: profiles.creditsBalance })
-    .from(profiles)
-    .where(eq(profiles.id, userId));
-  return row?.balance ?? 0;
+  return withFallback(
+    "getBalance",
+    async () => {
+      const [row] = await db
+        .select({ balance: profiles.creditsBalance })
+        .from(profiles)
+        .where(eq(profiles.id, userId));
+      return row?.balance ?? 0;
+    },
+    () => memoryGetBalance(userId),
+  );
 }
 
 /**
@@ -75,29 +96,39 @@ export async function debitCredits(opts: {
     }
   }
 
-  const result = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(profiles)
-      .set({
-        creditsBalance: sql`${profiles.creditsBalance} - ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(profiles.id, userId), sql`${profiles.creditsBalance} >= ${amount}`))
-      .returning({ balance: profiles.creditsBalance });
+  const result = await withFallback(
+    "debitCredits",
+    () =>
+      db.transaction(async (tx) => {
+        const [updated] = await tx
+          .update(profiles)
+          .set({
+            creditsBalance: sql`${profiles.creditsBalance} - ${amount}`,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(profiles.id, userId), sql`${profiles.creditsBalance} >= ${amount}`))
+          .returning({ balance: profiles.creditsBalance });
 
-    if (!updated) return null;
+        if (!updated) return null;
 
-    await tx.insert(creditLedger).values({
-      userId,
-      type: "generation_debit",
-      amount: -amount,
-      balanceAfter: updated.balance,
-      generationId,
-      description: description ?? "generation",
-    });
+        await tx.insert(creditLedger).values({
+          userId,
+          type: "generation_debit",
+          amount: -amount,
+          balanceAfter: updated.balance,
+          generationId,
+          description: description ?? "generation",
+        });
 
-    return updated.balance;
-  });
+        return updated.balance;
+      }),
+    () =>
+      memoryApply(userId, -amount, {
+        type: "generation_debit",
+        generationId,
+        description: description ?? "generation",
+      }),
+  );
 
   if (result === null) throw new InsufficientCreditsError();
   return result;
@@ -120,27 +151,37 @@ export async function refundCredits(opts: {
     });
   }
 
-  return db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(profiles)
-      .set({
-        creditsBalance: sql`${profiles.creditsBalance} + ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(profiles.id, userId))
-      .returning({ balance: profiles.creditsBalance });
+  return withFallback(
+    "refundCredits",
+    () =>
+      db.transaction(async (tx) => {
+        const [updated] = await tx
+          .update(profiles)
+          .set({
+            creditsBalance: sql`${profiles.creditsBalance} + ${amount}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(profiles.id, userId))
+          .returning({ balance: profiles.creditsBalance });
 
-    await tx.insert(creditLedger).values({
-      userId,
-      type: "refund",
-      amount,
-      balanceAfter: updated?.balance ?? amount,
-      generationId,
-      description: description ?? "refunded failed generation",
-    });
+        await tx.insert(creditLedger).values({
+          userId,
+          type: "refund",
+          amount,
+          balanceAfter: updated?.balance ?? amount,
+          generationId,
+          description: description ?? "refunded failed generation",
+        });
 
-    return updated?.balance ?? amount;
-  });
+        return updated?.balance ?? amount;
+      }),
+    () =>
+      memoryApply(userId, amount, {
+        type: "refund",
+        generationId,
+        description: description ?? "refunded failed generation",
+      }),
+  );
 }
 
 /** credit an order/allowance — used by the payment webhook */
@@ -149,26 +190,31 @@ export async function credit(userId: string, amount: number, description: string
     return memoryApply(userId, amount, { type: "purchase", description });
   }
 
-  return db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(profiles)
-      .set({
-        creditsBalance: sql`${profiles.creditsBalance} + ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(profiles.id, userId))
-      .returning({ balance: profiles.creditsBalance });
+  return withFallback(
+    "credit",
+    () =>
+      db.transaction(async (tx) => {
+        const [updated] = await tx
+          .update(profiles)
+          .set({
+            creditsBalance: sql`${profiles.creditsBalance} + ${amount}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(profiles.id, userId))
+          .returning({ balance: profiles.creditsBalance });
 
-    await tx.insert(creditLedger).values({
-      userId,
-      type: "purchase",
-      amount,
-      balanceAfter: updated?.balance ?? amount,
-      description,
-    });
+        await tx.insert(creditLedger).values({
+          userId,
+          type: "purchase",
+          amount,
+          balanceAfter: updated?.balance ?? amount,
+          description,
+        });
 
-    return updated?.balance ?? amount;
-  });
+        return updated?.balance ?? amount;
+      }),
+    () => memoryApply(userId, amount, { type: "purchase", description }),
+  );
 }
 
 /** signup bonus — once per account */
@@ -190,21 +236,39 @@ export async function grantReferralBonus(userId: string, referrerId: string): Pr
 
 export async function ledgerHistory(userId: string, limit = 50): Promise<LedgerEntry[]> {
   if (!dbConfigured()) return memoryLedgerHistory(userId, limit);
-  const rows = await db
-    .select()
-    .from(creditLedger)
-    .where(eq(creditLedger.userId, userId))
-    .orderBy(sql`${creditLedger.createdAt} desc`)
-    .limit(limit);
-  return rows.map((r) => ({
-    id: r.id,
-    userId: r.userId,
-    type: r.type,
-    amount: r.amount,
-    balanceAfter: r.balanceAfter,
-    generationId: r.generationId ?? undefined,
-    orderId: r.orderId ?? undefined,
-    description: r.description ?? undefined,
-    createdAt: r.createdAt.getTime(),
-  }));
+  return withFallback(
+    "ledgerHistory",
+    async () => {
+      const rows = await db
+        .select()
+        .from(creditLedger)
+        .where(eq(creditLedger.userId, userId))
+        .orderBy(sql`${creditLedger.createdAt} desc`)
+        .limit(limit);
+      return rows.map((r) => ({
+        id: r.id,
+        userId: r.userId,
+        type: r.type,
+        amount: r.amount,
+        balanceAfter: r.balanceAfter,
+        generationId: r.generationId ?? undefined,
+        orderId: r.orderId ?? undefined,
+        description: r.description ?? undefined,
+        createdAt: r.createdAt.getTime(),
+      }));
+    },
+    () => memoryLedgerHistory(userId, limit),
+  );
+}
+
+/**
+ * Sandbox-only grant: credits for the local test user, always on the
+ * in-memory store (a sandbox id is not a real profile row).
+ */
+export async function grantSandboxCredits(userId: string): Promise<number> {
+  const memo = await import("@/lib/credits/memory-store");
+  return memo.memoryApply(userId, SIGNUP_BONUS_CREDITS, {
+    type: "signup_bonus",
+    description: "sandbox signup bonus",
+  });
 }

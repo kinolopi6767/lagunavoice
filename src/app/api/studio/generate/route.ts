@@ -4,7 +4,7 @@ import { getProvider } from "@/lib/tts/registry";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import {
   BillingUnavailableError,
   InsufficientCreditsError,
@@ -16,7 +16,7 @@ import {
   isBanned,
   recordModerationStrike,
 } from "@/lib/abuse/rules";
-import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 import { recordProviderUsage } from "@/lib/costs/store";
 
 /**
@@ -63,14 +63,7 @@ export async function POST(request: Request) {
   const charCount = Array.from(text).length;
 
   // 0a. Session + ban check
-  let sessionUserId: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (data.user) sessionUserId = data.user.id;
-  } catch {
-    // Supabase not configured — guests only
-  }
+  const { userId: sessionUserId } = await resolveSession();
   if (sessionUserId) {
     const ban = isBanned(sessionUserId);
     if (ban) {
@@ -110,6 +103,14 @@ export async function POST(request: Request) {
   if (disabled) {
     return NextResponse.json(
       { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // 2c. Daily spend guard (COGS): block once the provider's cap is hit
+  if (!(await providerWithinSpendCap(voice.provider))) {
+    return NextResponse.json(
+      { error: "This voice engine has reached its daily spend limit.", code: "voice_engine_unavailable" },
       { status: 503 },
     );
   }

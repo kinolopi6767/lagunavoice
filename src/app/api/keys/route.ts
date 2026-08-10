@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import { createApiKey, listApiKeys } from "@/lib/keys/store";
 
 /**
@@ -15,15 +15,8 @@ const CreateSchema = z.object({
 });
 
 export async function GET() {
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-    userId = data.user.id;
-  } catch {
-    return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-  }
+  const { userId } = await resolveSession();
+  if (!userId) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
 
   return NextResponse.json({
     keys: listApiKeys(userId).map((k) => ({
@@ -39,15 +32,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-    userId = data.user.id;
-  } catch {
-    return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-  }
+  const { userId } = await resolveSession();
+  if (!userId) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => null);
   const parsed = CreateSchema.safeParse(body);

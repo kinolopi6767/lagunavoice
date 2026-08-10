@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { resolveSession } from "@/lib/sandbox/session";
 import { grantReferralBonus } from "@/lib/credits/ledger";
+import { REFERRAL_BONUS, claimReferral } from "@/lib/referrals/store";
 
 /**
  * Referral program — claim a referral code at signup to earn bonus credits.
@@ -11,28 +12,17 @@ import { grantReferralBonus } from "@/lib/credits/ledger";
  * In-memory referral tracking until the DB `referrals` table is wired.
  */
 
-const REFERRAL_BONUS = 2_500;
-
-const claimedPairs = new Set<string>();
-const referralCodes = new Map<string, string>(); // code → referrerUserId
-
-export function registerReferralCode(code: string, userId: string): void {
-  referralCodes.set(code, userId);
-}
-
 const ClaimSchema = z.object({
   code: z.string().min(4).max(40),
 });
 
 export async function POST(request: Request) {
-  let refereeId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-    refereeId = data.user.id;
-  } catch {
-    return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
+  const { userId: refereeId, supabaseConfigured } = await resolveSession();
+  if (!refereeId) {
+    const error = supabaseConfigured
+      ? { error: "Sign in required.", code: "unauthorized" as const }
+      : { error: "Authentication is being configured — use the local test playground.", code: "billing_unavailable" as const };
+    return NextResponse.json(error, { status: supabaseConfigured ? 401 : 503 });
   }
 
   const body = await request.json().catch(() => null);
@@ -41,21 +31,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
   }
 
-  const referrerId = referralCodes.get(parsed.data.code);
-  if (!referrerId) {
-    return NextResponse.json({ error: "Unknown referral code.", code: "not_found" }, { status: 404 });
+  const claim = claimReferral(parsed.data.code, refereeId);
+  switch (claim.status) {
+    case "not_found":
+      return NextResponse.json({ error: "Unknown referral code.", code: "not_found" }, { status: 404 });
+    case "self":
+      return NextResponse.json({ error: "You can't refer yourself.", code: "invalid_request" }, { status: 400 });
+    case "already_claimed":
+      return NextResponse.json({ ok: true, alreadyClaimed: true });
+    case "claimed":
+      await grantReferralBonus(refereeId, claim.referrerId);
+      return NextResponse.json({ ok: true, bonusCredits: REFERRAL_BONUS });
   }
-  if (referrerId === refereeId) {
-    return NextResponse.json({ error: "You can't refer yourself.", code: "invalid_request" }, { status: 400 });
-  }
-
-  const pairKey = `${referrerId}:${refereeId}`;
-  if (claimedPairs.has(pairKey)) {
-    return NextResponse.json({ ok: true, alreadyClaimed: true });
-  }
-  claimedPairs.add(pairKey);
-
-  await grantReferralBonus(refereeId, referrerId);
-
-  return NextResponse.json({ ok: true, bonusCredits: REFERRAL_BONUS });
 }
+
+export { registerReferralCode } from "@/lib/referrals/store";

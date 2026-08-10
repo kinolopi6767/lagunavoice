@@ -72,7 +72,7 @@ export function Pricing() {
       </div>
       <p className="mt-6 text-center text-sm text-muted-foreground">
         Need more? Custom packs and enterprise plans via{" "}
-        <a href="/contact" className="underline underline-offset-4">contact</a>.
+        <a href="mailto:hello@lugunavoice.com" className="underline underline-offset-4">contact</a>.
       </p>
     </section>
   );

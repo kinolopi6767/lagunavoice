@@ -60,7 +60,7 @@ export function AdminDashboard() {
 
   async function login() {
     setError(null);
-    const res = await fetch("/api/admin/login", {
+    const res = await fetch("/api/admin", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ password }),
