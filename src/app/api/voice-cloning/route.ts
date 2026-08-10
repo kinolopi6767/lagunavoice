@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,9 +10,12 @@ import ffmpegStatic from "ffmpeg-static";
 import { createClient } from "@/lib/supabase/server";
 import { getProvider } from "@/lib/tts/registry";
 import {
+  cloneAttemptsRemaining,
+  recordCloneAttempt,
   recordConsent,
   registerCustomVoice,
   slotsRemaining,
+  updateConsentVoiceId,
 } from "@/lib/tts/custom-voices";
 
 const execFileAsync = promisify(execFile);
@@ -123,16 +127,27 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Consent attestation recorded BEFORE the provider call (immutable)
+  // 3. Consent attestation recorded BEFORE the provider call (immutable).
+  //    The sample hash is a real SHA-256 of the content (rights proof).
+  const contentHash = `sha256:${createHash("sha256").update(sample).digest("hex")}`;
   recordConsent({
     userId,
-    voiceId: "pending", // replaced after clone
-    sampleHash: sampleHash ?? `sha256:${sample.length}:${Date.now()}`,
+    voiceId: "pending", // bound to the real clone id after success (updateConsentVoiceId)
+    sampleHash: sampleHash ?? contentHash,
     attestation: `I attest I own the rights to this voice sample and consent to it being cloned. (${new Date().toISOString()})`,
     language,
     ip: clientIp(request),
     userAgent: request.headers.get("user-agent") ?? undefined,
   });
+
+  // 3b. Clone attempt cap (5/hour — failed clones still cost provider time)
+  if (cloneAttemptsRemaining(userId) <= 0) {
+    return NextResponse.json(
+      { error: "Too many clone attempts. Try again in an hour.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
+  recordCloneAttempt(userId);
 
   // 4. Slot check
   const remaining = slotsRemaining(userId);
@@ -165,8 +180,10 @@ export async function POST(request: Request) {
     };
 
     registerCustomVoice(voice, userId, sampleHash);
+    updateConsentVoiceId(sampleHash ?? contentHash, publicId);
 
-    return NextResponse.json({ voice, slotsRemaining: slotsRemaining(userId) - 1 }, { status: 201 });
+    // slotsRemaining() already reflects the registered clone — no -1
+    return NextResponse.json({ voice, slotsRemaining: slotsRemaining(userId) }, { status: 201 });
   } catch (err) {
     console.error("[voice-cloning] clone failed", err);
     return NextResponse.json(

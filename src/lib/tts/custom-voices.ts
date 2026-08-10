@@ -80,6 +80,31 @@ export function recordConsent(record: Omit<ConsentRecord, "createdAt">): void {
   consents.push({ ...record, createdAt: Date.now() });
 }
 
+/** bind the pending consent to the real clone voice id once it exists */
+export function updateConsentVoiceId(sampleHash: string, voiceId: string): void {
+  const record = consents.find((c) => c.voiceId === "pending" && c.sampleHash === sampleHash);
+  if (record) record.voiceId = voiceId;
+}
+
 export function consentForVoice(voiceId: string): ConsentRecord | undefined {
   return consents.find((c) => c.voiceId === voiceId);
+}
+
+/** per-user clone attempt cap (5 attempts/hour — failed clones still cost provider time) */
+const cloneAttempts = new Map<string, number[]>();
+
+export function cloneAttemptsRemaining(userId: string, windowMs = 3_600_000, max = 5): number {
+  const now = Date.now();
+  const windowStart = now - windowMs;
+  const attempts = (cloneAttempts.get(userId) ?? []).filter((t) => t > windowStart);
+  cloneAttempts.set(userId, attempts);
+  return Math.max(0, max - attempts.length);
+}
+
+export function recordCloneAttempt(userId: string): void {
+  const now = Date.now();
+  const windowStart = now - 3_600_000;
+  const attempts = (cloneAttempts.get(userId) ?? []).filter((t) => t > windowStart);
+  attempts.push(now);
+  cloneAttempts.set(userId, attempts);
 }

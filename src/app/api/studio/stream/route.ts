@@ -4,6 +4,13 @@ import { DeepgramProvider } from "@/lib/tts/deepgram";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { createClient } from "@/lib/supabase/server";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { recordProviderUsage } from "@/lib/costs/store";
+import {
+  InsufficientCreditsError,
+  debitCredits,
+  refundCredits,
+} from "@/lib/credits/ledger";
 
 /**
  * POST /api/studio/stream — flagship streaming preview (Deepgram).
@@ -74,15 +81,16 @@ export async function POST(request: Request) {
     );
   }
 
-  // guest rate limit (in-memory; DB-backed in M7)
-  if (!consumeGuestStream(ip)) {
+  // provider kill-switch
+  const disabled = isProviderKillSwitched(voice.provider);
+  if (disabled) {
     return NextResponse.json(
-      { error: "Streaming preview limit reached for today.", code: "daily_limit_exceeded" },
-      { status: 429 },
+      { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
     );
   }
 
-  // authenticate → user id (for tags + future billing); guests allowed with tag
+  // authenticate → user id (for tags + billing); guests get capped free previews
   let userId = "guest";
   try {
     const supabase = await createClient();
@@ -92,8 +100,36 @@ export async function POST(request: Request) {
     // Supabase not configured — guests proceed
   }
 
-  const provider = new DeepgramProvider();
+  // guest rate limit applies to guests only (signed-in users bill on credits)
+  if (userId === "guest" && !consumeGuestStream(ip)) {
+    return NextResponse.json(
+      { error: "Streaming preview limit reached for today.", code: "daily_limit_exceeded" },
+      { status: 429 },
+    );
+  }
+
+  // flagship billing: signed-in users pay 2 credits/char, refunded on failure
+  // (guests stay within their free daily stream cap)
   const generationId = crypto.randomUUID();
+  const credits = charCount * 2;
+  if (userId !== "guest") {
+    try {
+      await debitCredits({ userId, amount: credits, generationId, description: `stream: ${voice.name}` });
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return NextResponse.json(
+          { error: "Not enough credits. Top up to continue.", code: "insufficient_credits" },
+          { status: 402 },
+        );
+      }
+      return NextResponse.json(
+        { error: "Premium billing is being configured — free voices work.", code: "billing_unavailable" },
+        { status: 503 },
+      );
+    }
+  }
+
+  const provider = new DeepgramProvider();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -103,13 +139,22 @@ export async function POST(request: Request) {
           voice,
           rate,
           pronunciations,
-          tag: `${userId}:guest-stream:${generationId}`,
+          tag: `${userId}:stream:${generationId}`,
         })) {
           controller.enqueue(new Uint8Array(chunk));
         }
         controller.close();
+        await recordProviderUsage(voice.provider, charCount, 0, { tier: "flagship" });
       } catch (err) {
         console.error("[stream] deepgram failed", err);
+        if (userId !== "guest") {
+          try {
+            await refundCredits({ userId, amount: credits, generationId, description: "refunded failed stream" });
+          } catch (refundErr) {
+            console.error("[stream] refund failed (manual action needed)", refundErr);
+          }
+        }
+        await recordProviderUsage(voice.provider, 0, 0, { tier: "flagship", errored: true });
         controller.error(err);
       }
     },
@@ -120,6 +165,7 @@ export async function POST(request: Request) {
       "content-type": "audio/wav", // linear16 wrapped in WAV by the player
       "x-lv-generation": generationId,
       "x-lv-chars": String(charCount),
+      "x-lv-credits": String(userId !== "guest" ? credits : 0),
     },
   });
 }

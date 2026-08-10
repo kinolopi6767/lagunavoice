@@ -5,6 +5,8 @@ import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
 import { startLongFormJob } from "@/lib/tts/longform";
 import { createClient } from "@/lib/supabase/server";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { recordProviderUsage } from "@/lib/costs/store";
 import {
   BillingUnavailableError,
   InsufficientCreditsError,
@@ -58,6 +60,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
   }
 
+  // provider kill-switch
+  const disabled = isProviderKillSwitched(voice.provider);
+  if (disabled) {
+    return NextResponse.json(
+      { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
   const jobId = crypto.randomUUID();
 
   // ---------- free tier (Edge) ----------
@@ -69,7 +80,12 @@ export async function POST(request: Request) {
         { status: 429 },
       );
     }
-    startLongFormJob({ id: jobId, text, voice, style, pitch, rate, tag: `guest:${ip}` });
+    startLongFormJob({
+      id: jobId, text, voice, style, pitch, rate, tag: `guest:${ip}`,
+      onDone: async () => {
+        await recordProviderUsage(voice.provider, charCount, 0);
+      },
+    });
     return NextResponse.json({ jobId, status: "processing", estimatedChars: charCount });
   }
 
@@ -113,6 +129,10 @@ export async function POST(request: Request) {
     rate,
     tag: `${userId}:longform`,
     onDone: async (failed) => {
+      await recordProviderUsage(voice.provider, charCount, 0, {
+        tier: voice.tier === "flagship" ? "flagship" : "premium",
+        errored: failed,
+      });
       if (failed) {
         try {
           await refundCredits({ userId, amount: credits, generationId: jobId, description: "refunded failed longform" });

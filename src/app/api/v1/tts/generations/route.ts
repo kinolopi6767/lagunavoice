@@ -6,6 +6,8 @@ import { startGeneration } from "@/lib/generations/store";
 import { moderateText } from "@/lib/security/moderation";
 import { isProviderKillSwitched } from "@/lib/ops/flags";
 import { isBanned } from "@/lib/abuse/rules";
+import { InsufficientCreditsError, debitCredits, refundCredits } from "@/lib/credits/ledger";
+import { recordProviderUsage } from "@/lib/costs/store";
 
 /**
  * POST /api/v1/tts/generations — developer API (async + poll).
@@ -94,8 +96,28 @@ export async function POST(request: Request) {
     );
   }
 
-  // 7. Start generation
+  // 7. Credits: premium = 1/char, flagship = 2/char, free = 0.
+  //    Debited atomically before synthesis, refunded automatically on failure.
+  const charCount = Array.from(text).length;
+  const creditRate = voice.tier === "flagship" ? 2 : voice.tier === "premium" ? 1 : 0;
+  const credits = charCount * creditRate;
   const generationId = `gen_${crypto.randomUUID().replaceAll("-", "")}`;
+
+  if (credits > 0) {
+    try {
+      await debitCredits({ userId: record.userId, amount: credits, generationId, description: `api: ${voice.name}` });
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return NextResponse.json(
+          { error: "Not enough credits. Top up to continue.", code: "insufficient_credits" },
+          { status: 402 },
+        );
+      }
+      throw err;
+    }
+  }
+
+  // 8. Start generation (refund on provider failure)
   startGeneration({
     id: generationId,
     userId: record.userId,
@@ -105,10 +127,23 @@ export async function POST(request: Request) {
     pitch,
     rate,
     tag: `${record.userId}:api:${record.id}`,
+    onDone: async (failed) => {
+      await recordProviderUsage(voice.provider, charCount, 0, {
+        tier: voice.tier === "flagship" ? "flagship" : "premium",
+        errored: failed,
+      });
+      if (failed && credits > 0) {
+        try {
+          await refundCredits({ userId: record.userId, amount: credits, generationId, description: "refunded failed API generation" });
+        } catch (refundErr) {
+          console.error("[v1] refund failed (manual action needed)", refundErr);
+        }
+      }
+    },
   });
 
   return NextResponse.json(
-    { id: generationId, status: "processing", estimatedCredits: Array.from(text).length * (voice.tier === "flagship" ? 2 : 1) },
+    { id: generationId, status: "processing", estimatedCredits: credits },
     { status: 202 },
   );
 }

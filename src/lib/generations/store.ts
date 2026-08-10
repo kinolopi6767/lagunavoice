@@ -59,8 +59,9 @@ export function startGeneration(opts: {
   pitch?: number;
   rate?: number;
   tag?: string;
+  onDone?: (failed: boolean) => void | Promise<void>;
 }): ApiGeneration {
-  const { id, userId, voice, text, style, pitch, rate, tag } = opts;
+  const { id, userId, voice, text, style, pitch, rate, tag, onDone } = opts;
   const provider = getProvider(voice.provider);
   const charCount = Array.from(text).length;
 
@@ -80,6 +81,7 @@ export function startGeneration(opts: {
   generations.set(id, gen);
 
   void (async () => {
+    let failed = false;
     try {
       // chunk at provider caps (single gen is usually 1 chunk; long text splits)
       const maxChars = Math.min(provider.maxCharsPerRequest, 2_000);
@@ -100,9 +102,17 @@ export function startGeneration(opts: {
       gen.durationMs = durationMs;
       gen.status = "completed";
     } catch (err) {
+      failed = true;
       gen.status = "failed";
       gen.error = (err as Error).message;
     } finally {
+      if (onDone) {
+        try {
+          await onDone(failed);
+        } catch (cbErr) {
+          console.error("[generations] onDone hook failed", cbErr);
+        }
+      }
       setTimeout(() => generations.delete(id), TTL_MS);
     }
   })();

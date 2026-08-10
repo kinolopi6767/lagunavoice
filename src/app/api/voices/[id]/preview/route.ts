@@ -3,18 +3,31 @@ import { getProvider } from "@/lib/tts/registry";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { getPreview, setPreview } from "@/lib/cache/preview";
 import { createClient } from "@/lib/supabase/server";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
 
 export const dynamic = "force-dynamic";
 
 const PREVIEW_TEXT =
   "Hi, I'm {name}. Welcome to LugunaVoice. Some words are meant to be read, others are waiting to be heard.";
 
+// preview generation costs provider credits (premium/flagship) — cap per IP
+const PREVIEWS_PER_IP_PER_DAY = 30;
+const previewCounts = new Map<string, number>();
+
+function consumePreview(ip: string): boolean {
+  const key = `${ip}:${new Date().toISOString().slice(0, 10)}`;
+  const used = previewCounts.get(key) ?? 0;
+  if (used >= PREVIEWS_PER_IP_PER_DAY) return false;
+  previewCounts.set(key, used + 1);
+  return true;
+}
+
 /**
  * GET /api/voices/[id]/preview — play a voice preview (incl. owner's clones).
- * Generates once per voice, then serves from cache (24h TTL).
+ * Generates once per voice (cached 24h), rate limited per IP, kill-switch aware.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -42,6 +55,25 @@ export async function GET(
         "cache-control": "public, max-age=86400",
       },
     });
+  }
+
+  // provider down or admin-disabled
+  const disabled = isProviderKillSwitched(voice.provider);
+  if (disabled) {
+    return NextResponse.json(
+      { error: "Voice engine temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // per-IP daily preview cap (protects provider spend)
+  const xff = request.headers.get("x-forwarded-for");
+  const ip = xff?.split(",")[0]?.trim() || "unknown";
+  if (!consumePreview(ip)) {
+    return NextResponse.json(
+      { error: "Preview limit reached for today.", code: "daily_limit_exceeded" },
+      { status: 429 },
+    );
   }
 
   try {

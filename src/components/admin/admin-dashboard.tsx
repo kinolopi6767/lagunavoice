@@ -33,7 +33,7 @@ export function AdminDashboard() {
   const [message, setMessage] = useState<string | null>(null);
 
   async function load() {
-    const res = await fetch("/api/admin/data");
+    const res = await fetch("/api/admin");
     if (!res.ok) {
       return; // not authed — stay on login
     }
@@ -44,7 +44,7 @@ export function AdminDashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/admin/data")
+    fetch("/api/admin")
       .then((res) => (res.ok ? (res.json() as Promise<AdminData>) : null))
       .then((d) => {
         if (!cancelled && d) {

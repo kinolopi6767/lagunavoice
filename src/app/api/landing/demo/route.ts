@@ -6,6 +6,7 @@ import { DEMO_MAX_CHARS, DEMO_STYLES, DEMO_VOICES } from "@/lib/tts/demo-voices"
 import { moderateText } from "@/lib/security/moderation";
 import { verifyTurnstileToken } from "@/lib/security/turnstile";
 import { consumeDemoGeneration, getDemoRemaining } from "@/lib/rate-limit/demo";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
 
 /**
  * POST /api/landing/demo — no-signup voice demo (FameSpeak-style).
@@ -95,9 +96,16 @@ export async function POST(request: Request) {
     );
   }
 
-  // 5. Synthesize via the Edge provider
+  // 5. Synthesize via the Edge provider (kill-switch aware)
   try {
     const provider = getProvider(resolved.provider);
+    const disabled = isProviderKillSwitched(resolved.provider);
+    if (disabled) {
+      return NextResponse.json(
+        { error: "We could not reach the voice engine. Please try again.", code: "voice_engine_unavailable" },
+        { status: 503 },
+      );
+    }
     const result = await provider.synthesize({
       text,
       voice: resolved,
