@@ -4,15 +4,23 @@ import { getProvider } from "@/lib/tts/registry";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
+import { createClient } from "@/lib/supabase/server";
+import {
+  BillingUnavailableError,
+  InsufficientCreditsError,
+  debitCredits,
+  refundCredits,
+} from "@/lib/credits/ledger";
 
 /**
- * POST /api/studio/generate — free-tier (Edge) generation for the Studio.
+ * POST /api/studio/generate — Studio generation.
  *
- * Guests: capped by IP (20 generations / 100k chars per day).
- * Registered users: same cap for now; M3 moves this to per-account credits
- * and persists generations to the DB.
+ * Free (Edge) voices: capped per IP (100k chars/day), no credits.
+ * Premium (Typecast) voices: 1 credit = 1 char, debited atomically before
+ * synthesis and refunded automatically if synthesis fails.
  *
- * Body: { text, voiceId, style?, pitch?, rate? }
+ * Requires Supabase session + DB for premium. Guests and pre-DB setups get
+ * free voices only (BillingUnavailableError).
  */
 
 const MAX_CHARS = 5_000;
@@ -55,36 +63,85 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Voice must exist and be free-tier for now
+  // 2. Voice must exist
   const voice = await getVoiceById(voiceId);
   if (!voice) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
   }
-  if (voice.tier !== "free") {
-    return NextResponse.json(
-      { error: "Premium voices arrive with credits — coming soon.", code: "premium_unavailable" },
-      { status: 402 },
-    );
+
+  // 3a. Free voices — per-IP daily caps, no credits
+  if (voice.tier === "free") {
+    const cap = consumeFreeChars(`ip:${ip}`, charCount);
+    if (!cap.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            cap.reason === "daily_char_limit"
+              ? "Daily free-character limit reached. Register for more."
+              : "Daily generation limit reached.",
+          code: "daily_limit_exceeded",
+        },
+        { status: 429 },
+      );
+    }
+
+    try {
+      const provider = getProvider(voice.provider);
+      const result = await provider.synthesize({ text, voice, style, pitch, rate });
+      return NextResponse.json({
+        audioBase64: result.audio.toString("base64"),
+        mimeType: result.mimeType,
+        durationMs: result.durationMs,
+        charCount,
+        tier: "free",
+        remainingChars: cap.remainingChars,
+      });
+    } catch (err) {
+      console.error("[studio] free synthesis failed", err);
+      return NextResponse.json(
+        { error: "We could not reach the voice engine. Please try again.", code: "voice_engine_unavailable" },
+        { status: 503 },
+      );
+    }
   }
 
-  // 3. Daily caps
-  const cap = consumeFreeChars(`ip:${ip}`, charCount);
-  if (!cap.allowed) {
-    return NextResponse.json(
-      {
-        error:
-          cap.reason === "daily_char_limit"
-            ? "Daily free-character limit reached. Register for more."
-            : "Daily generation limit reached.",
-        code: "daily_limit_exceeded",
-      },
-      { status: 429 },
-    );
-  }
-
-  // 4. Synthesize
+  // 3b. Premium / flagship — session + credits required
+  let userId: string;
   try {
-    const provider = getProvider(voice.provider);
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { error: "Sign in to generate with premium voices.", code: "unauthorized" },
+        { status: 401 },
+      );
+    }
+    userId = user.id;
+  } catch {
+    // Supabase not configured yet — premium is locked, free voices keep working
+    return NextResponse.json(
+      { error: "Premium billing is being configured — free voices work.", code: "billing_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  const provider = getProvider(voice.provider);
+  const generationId = crypto.randomUUID();
+
+  let debited = 0;
+  try {
+    // atomic debit: 1 credit per char (flagship voices = 2× set by voice tier)
+    const creditRate = voice.tier === "flagship" ? 2 : 1;
+    debited = charCount * creditRate;
+    await debitCredits({
+      userId,
+      amount: debited,
+      generationId,
+      description: `voice: ${voice.name} (${voice.provider}, ${voice.tier})`,
+    });
+
     const result = await provider.synthesize({ text, voice, style, pitch, rate });
 
     return NextResponse.json({
@@ -92,10 +149,37 @@ export async function POST(request: Request) {
       mimeType: result.mimeType,
       durationMs: result.durationMs,
       charCount,
-      remainingChars: cap.remainingChars,
+      tier: voice.tier,
+      creditsCharged: debited,
     });
   } catch (err) {
-    console.error("[studio] synthesis failed", err);
+    // refund anything we debited when synthesis failed
+    if (debited > 0) {
+      try {
+        await refundCredits({
+          userId,
+          amount: debited,
+          generationId,
+          description: "refunded failed generation",
+        });
+      } catch (refundErr) {
+        console.error("[studio] refund failed (manual action needed)", refundErr);
+      }
+    }
+
+    if (err instanceof InsufficientCreditsError) {
+      return NextResponse.json(
+        { error: "Not enough credits. Top up to continue.", code: "insufficient_credits" },
+        { status: 402 },
+      );
+    }
+    if (err instanceof BillingUnavailableError) {
+      return NextResponse.json(
+        { error: "Premium billing is being configured — free voices work.", code: "billing_unavailable" },
+        { status: 503 },
+      );
+    }
+    console.error("[studio] premium synthesis failed", err);
     return NextResponse.json(
       { error: "We could not reach the voice engine. Please try again.", code: "voice_engine_unavailable" },
       { status: 503 },
