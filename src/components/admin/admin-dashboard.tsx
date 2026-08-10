@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface AdminData {
   balance: number | null;
@@ -25,6 +27,7 @@ interface AdminData {
 
 export function AdminDashboard() {
   const [authed, setAuthed] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AdminData | null>(null);
@@ -34,12 +37,11 @@ export function AdminDashboard() {
 
   async function load() {
     const res = await fetch("/api/admin");
-    if (!res.ok) {
-      return; // not authed — stay on login
+    if (res.ok) {
+      const d = (await res.json()) as AdminData;
+      setData(d);
+      setAuthed(true);
     }
-    const d = (await res.json()) as AdminData;
-    setData(d);
-    setAuthed(true);
   }
 
   useEffect(() => {
@@ -52,7 +54,10 @@ export function AdminDashboard() {
           setAuthed(true);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -66,6 +71,7 @@ export function AdminDashboard() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
+      setPassword("");
       await load();
     } else {
       const d = await res.json().catch(() => null);
@@ -112,28 +118,68 @@ export function AdminDashboard() {
     load();
   }
 
+  if (checking) {
+    return (
+      <div className="mx-auto mt-24 w-full max-w-sm space-y-3">
+        <Skeleton className="h-8 w-2/3 mx-auto" />
+        <Skeleton className="h-28 w-full" />
+      </div>
+    );
+  }
+
   if (!authed) {
     return (
-      <Card className="mx-auto mt-20 max-w-sm">
-        <CardHeader>
-          <CardTitle>Admin sign in</CardTitle>
-          <CardDescription>Password is set via the ADMIN_PASSWORD env var.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Label htmlFor="pw">Password</Label>
-          <Input id="pw" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} />
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button onClick={login} className="w-full">Sign in</Button>
-        </CardContent>
-      </Card>
+      <div className="mx-auto mt-16 w-full max-w-sm">
+        <Card>
+          <CardHeader>
+            <CardTitle>Admin sign in</CardTitle>
+            <CardDescription>
+              Owner-only access. The password is set by the account owner — contact them if
+              you need access.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Label htmlFor="pw">Password</Label>
+            <Input
+              id="pw"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && login()}
+              placeholder="••••••••"
+              autoFocus
+            />
+            {error ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            ) : null}
+            <Button onClick={login} className="w-full" disabled={!password}>
+              Sign in
+            </Button>
+          </CardContent>
+        </Card>
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          <a href="/studio" className="underline underline-offset-4">← Back to Studio</a>
+        </p>
+      </div>
     );
   }
 
   if (!data) return <p className="p-10">Loading…</p>;
 
+  const pendingOrders = data.orders.filter((o) => o.status === "manual_pending");
+
   return (
     <div className="space-y-6">
       {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
+
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold tracking-tight">Admin</h1>
+        <p className="mt-2 text-muted-foreground">
+          Manual credits, order confirmation, abuse flags, provider kill-switches and COGS.
+        </p>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -158,22 +204,46 @@ export function AdminDashboard() {
         <Card>
           <CardHeader><CardTitle className="text-lg">Manual actions</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex gap-2">
-              <Input placeholder="user id or email" value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)} />
-              <Input type="number" className="w-28" value={grantAmount} onChange={(e) => setGrantAmount(e.target.value)} />
-              <Button onClick={grant}>Grant credits</Button>
+            <div className="space-y-2">
+              <Label htmlFor="grant-user">User</Label>
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  id="grant-user"
+                  placeholder="user id or email"
+                  className="min-w-0 flex-1"
+                  value={grantEmail}
+                  onChange={(e) => setGrantEmail(e.target.value)}
+                />
+                <Input
+                  type="number"
+                  className="w-28"
+                  value={grantAmount}
+                  onChange={(e) => setGrantAmount(e.target.value)}
+                />
+                <Button onClick={grant} disabled={!grantEmail.trim()}>
+                  Grant credits
+                </Button>
+              </div>
             </div>
             <div>
               <p className="mb-2 text-sm font-medium">Pending manual orders (WhatsApp/UPI)</p>
-              {data.orders.filter((o) => o.status === "manual_pending").length === 0 ? (
-                <p className="text-sm text-muted-foreground">None</p>
+              {pendingOrders.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  None — all orders are automatically fulfilled.
+                </p>
               ) : (
-                data.orders.filter((o) => o.status === "manual_pending").map((o) => (
-                  <div key={o.id} className="flex items-center justify-between rounded-md border p-2 text-sm">
-                    <span>{o.packSlug} · {o.credits.toLocaleString()} cr · {o.userId.slice(0, 8)}</span>
-                    <Button size="sm" variant="outline" onClick={() => confirmOrder(o.id)}>Confirm paid</Button>
-                  </div>
-                ))
+                <div className="space-y-2">
+                  {pendingOrders.map((o) => (
+                    <div key={o.id} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
+                      <span className="min-w-0 truncate">
+                        {o.packSlug} · {o.credits.toLocaleString()} cr · {o.userId.slice(0, 8)}
+                      </span>
+                      <Button size="sm" variant="outline" className="shrink-0" onClick={() => confirmOrder(o.id)}>
+                        Confirm paid
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </CardContent>
@@ -184,14 +254,20 @@ export function AdminDashboard() {
           <CardContent className="space-y-2">
             {data.providers.map((p) => (
               <div key={p.provider} className="flex items-center justify-between rounded-md border p-2 text-sm">
-                <span className="font-medium">{p.provider}</span>
+                <span className="flex items-center gap-2 font-medium">
+                  {p.provider}
+                  <Badge variant={p.enabled ? "secondary" : "destructive"} className="text-[10px]">
+                    {p.enabled ? "live" : "down"}
+                  </Badge>
+                </span>
                 <Button size="sm" variant={p.enabled ? "outline" : "default"} onClick={() => toggleProvider(p.provider, !p.enabled)}>
-                  {p.enabled ? "Enabled" : "Disabled"}
+                  {p.enabled ? "Disable" : "Enable"}
                 </Button>
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              Disabling a provider returns 503 for its voices (research/08 kill-switch pattern).
+              Disabling a provider returns 503 for its voices so you can test the
+              degradation paths safely.
             </p>
           </CardContent>
         </Card>
@@ -201,15 +277,24 @@ export function AdminDashboard() {
         <CardHeader><CardTitle className="text-lg">Abuse flags (R1–R24)</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {data.flags.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No flags — clean.</p>
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No flags — clean.
+            </p>
           ) : (
             data.flags.slice(0, 20).map((f) => (
-              <div key={f.id} className="flex items-center justify-between rounded-md border p-2 text-sm">
-                <span>
-                  <b>{f.rule}</b> · {f.severity} · {f.status}
-                  {f.userId ? ` · user ${f.userId.slice(0, 8)}` : ""}
+              <div key={f.id} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
+                <span className="min-w-0">
+                  <b>{f.rule}</b>
+                  <Badge
+                    variant={f.severity === "high" ? "destructive" : "secondary"}
+                    className="ml-2 text-[10px]"
+                  >
+                    {f.severity}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground"> · {f.status}</span>
+                  {f.userId ? <span className="ml-1 text-xs text-muted-foreground">· user {f.userId.slice(0, 8)}</span> : null}
                 </span>
-                <Button size="sm" variant="ghost" disabled={f.status !== "open"} onClick={() => resolveFlag(f.id)}>
+                <Button size="sm" variant="ghost" className="shrink-0" disabled={f.status !== "open"} onClick={() => resolveFlag(f.id)}>
                   Resolve
                 </Button>
               </div>
@@ -222,7 +307,9 @@ export function AdminDashboard() {
         <CardHeader><CardTitle className="text-lg">Provider COGS (today)</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {data.usage.today.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No provider usage recorded yet today.</p>
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No provider usage recorded yet today.
+            </p>
           ) : (
             data.usage.today.map((r) => (
               <div key={r.provider} className="flex justify-between rounded-md border p-2 text-sm">

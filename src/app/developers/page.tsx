@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/app/app-shell";
 import { DevelopersDocs } from "@/components/developers/developers-docs";
 
 export const metadata: Metadata = {
@@ -9,8 +10,10 @@ export const metadata: Metadata = {
 
 export default function DevelopersPage() {
   return (
-    <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
-      <DevelopersDocs />
-    </main>
+    <AppShell>
+      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
+        <DevelopersDocs />
+      </main>
+    </AppShell>
   );
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/app/app-shell";
 import { CloneStudio } from "@/components/voice-cloning/clone-studio";
 
 export const metadata: Metadata = {
@@ -9,7 +10,8 @@ export const metadata: Metadata = {
 
 export default function VoiceCloningPage() {
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
+    <AppShell>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Voice cloning</h1>
         <p className="mt-2 text-muted-foreground">
@@ -19,5 +21,6 @@ export default function VoiceCloningPage() {
       </div>
       <CloneStudio />
     </main>
+    </AppShell>
   );
 }

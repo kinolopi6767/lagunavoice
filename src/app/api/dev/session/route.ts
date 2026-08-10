@@ -17,8 +17,22 @@ import {
  * Temporary local-testing facility: only meaningful while Supabase auth is
  * NOT configured (the cookie is ignored once real auth exists).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const configured = supabaseConfigured();
+  const enter = new URL(request.url).searchParams.get("action");
+  if (!configured && enter === "enter") {
+    const name = new URL(request.url).searchParams.get("name") ?? "tester";
+    const user = await createSandboxUser(name);
+    const res = NextResponse.json({
+      ok: true, sandbox: true, userId: user.userId,
+      referralCode: user.referralCode, credits: user.credits,
+      hint: "Sandbox session entered via ?action=enter (link-based).",
+    });
+    res.cookies.set(sandboxCookieName(), user.userId, {
+      httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
+    });
+    return res;
+  }
   if (configured) {
     return NextResponse.json({ supabaseConfigured: true, sandbox: false });
   }

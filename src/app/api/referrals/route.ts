@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveSession } from "@/lib/sandbox/session";
 import { grantReferralBonus } from "@/lib/credits/ledger";
-import { REFERRAL_BONUS, claimReferral } from "@/lib/referrals/store";
+import { getReferralSummary, REFERRAL_BONUS, claimReferral } from "@/lib/referrals/store";
 
 /**
  * Referral program — claim a referral code at signup to earn bonus credits.
  * POST /api/referrals { code } — the referee gets the signup bonus; the
  * referrer gets the referral bonus (once per pair).
+ * GET  /api/referrals — your code, total bonus earned and recent claims.
  *
  * In-memory referral tracking until the DB `referrals` table is wired.
  */
@@ -15,6 +16,20 @@ import { REFERRAL_BONUS, claimReferral } from "@/lib/referrals/store";
 const ClaimSchema = z.object({
   code: z.string().min(4).max(40),
 });
+
+export async function GET() {
+  const { userId, supabaseConfigured } = await resolveSession();
+  if (!userId) {
+    const error = supabaseConfigured
+      ? { error: "Sign in required.", code: "unauthorized" as const }
+      : { error: "Authentication is being configured — use the local test playground.", code: "billing_unavailable" as const };
+    return NextResponse.json(error, { status: supabaseConfigured ? 401 : 503 });
+  }
+  const summary = getReferralSummary(userId);
+  return NextResponse.json(summary ?? { error: "No referral code available yet." }, {
+    status: summary ? 200 : 404,
+  });
+}
 
 export async function POST(request: Request) {
   const { userId: refereeId, supabaseConfigured } = await resolveSession();

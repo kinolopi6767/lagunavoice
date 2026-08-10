@@ -1,22 +1,25 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { VoiceRecord } from "@/lib/tts/types";
+import { VoicePicker } from "@/components/studio/voice-picker";
 
 const MAX_CHARS = 5_000;
-const STYLES = ["neutral", "cheerful", "calm", "serious", "excited"];
+const STYLES = [
+  { id: "neutral", label: "Neutral" },
+  { id: "cheerful", label: "Cheerful" },
+  { id: "calm", label: "Calm" },
+  { id: "serious", label: "Serious" },
+  { id: "excited", label: "Excited" },
+];
 
 type Status = "idle" | "generating" | "ready" | "error";
 
 export function StudioGenerator() {
   const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
-  const [voices, setVoices] = useState<VoiceRecord[]>([]);
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [style, setStyle] = useState("neutral");
   const [rate, setRate] = useState(1.0);
@@ -26,19 +29,6 @@ export function StudioGenerator() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [remainingChars, setRemainingChars] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // load first page of free voices
-  useEffect(() => {
-    fetch("/api/voices?limit=60&tier=free")
-      .then((r) => r.json() as Promise<{ voices: VoiceRecord[] }>)
-      .then((d) => {
-        setVoices(d.voices);
-        if (d.voices.length > 0) setVoiceId(d.voices[0].id);
-      })
-      .catch(() => setError("Could not load voices."));
-  }, []);
-
-  const filtered = voices.filter((v) => v.name.toLowerCase().includes(query.toLowerCase()));
 
   const charsLeft = MAX_CHARS - Array.from(text).length;
 
@@ -76,45 +66,32 @@ export function StudioGenerator() {
     }
   }
 
+  function downloadAudio() {
+    if (!audioRef.current) return;
+    const a = document.createElement("a");
+    a.href = audioRef.current.src;
+    a.download = "lugunavoice.mp3";
+    a.click();
+  }
+
   return (
     <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Voice</CardTitle>
-          <CardDescription>Free voices — premium arrives with credits</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input placeholder="Search voices…" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
-            {filtered.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => setVoiceId(v.id)}
-                className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                  voiceId === v.id
-                    ? "border-primary bg-primary/10"
-                    : "hover:bg-muted"
-                }`}
-              >
-                <span className="block truncate font-medium">{v.name}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {v.language} · {v.gender ?? "—"}
-                </span>
-              </button>
-            ))}
-          </div>
+      <Card className="min-w-0">
+        <CardContent>
+          <VoicePicker value={voiceId} onSelect={setVoiceId} />
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-lg">Script</CardTitle>
-          <CardDescription>Paste, pick, generate. Up to 5,000 chars per request.</CardDescription>
+          <CardDescription>Paste your script, adjust the delivery, generate.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
+            <Label htmlFor="studio-text">Script</Label>
             <textarea
+              id="studio-text"
               value={text}
               onChange={(e) => setText(e.target.value)}
               maxLength={MAX_CHARS}
@@ -129,21 +106,24 @@ export function StudioGenerator() {
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
-              <Label>Style</Label>
+              <Label htmlFor="studio-style">Style</Label>
               <select
+                id="studio-style"
                 value={style}
                 onChange={(e) => setStyle(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
                 {STYLES.map((s) => (
-                  <option key={s} value={s}>
-                    {s[0].toUpperCase() + s.slice(1)}
+                  <option key={s.id} value={s.id}>
+                    {s.label}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="rate">Speed ({rate.toFixed(2)}×)</Label>
+              <Label htmlFor="rate">
+                Speed <span className="text-muted-foreground">({rate.toFixed(2)}×)</span>
+              </Label>
               <input
                 id="rate"
                 type="range"
@@ -152,11 +132,13 @@ export function StudioGenerator() {
                 step={0.05}
                 value={rate}
                 onChange={(e) => setRate(Number(e.target.value))}
-                className="w-full"
+                className="mt-2.5 w-full"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="pitch">Pitch ({pitch > 0 ? "+" : ""}{pitch}st)</Label>
+              <Label htmlFor="pitch">
+                Pitch <span className="text-muted-foreground">({pitch > 0 ? "+" : ""}{pitch} st)</span>
+              </Label>
               <input
                 id="pitch"
                 type="range"
@@ -165,7 +147,7 @@ export function StudioGenerator() {
                 step={1}
                 value={pitch}
                 onChange={(e) => setPitch(Number(e.target.value))}
-                className="w-full"
+                className="mt-2.5 w-full"
               />
             </div>
           </div>
@@ -181,17 +163,26 @@ export function StudioGenerator() {
           {audioUrl && status === "ready" ? (
             <div className="rounded-md border bg-muted/40 p-3">
               <audio controls src={audioUrl} className="w-full" />
-              <p className="mt-1 text-xs text-muted-foreground">
-                {remainingChars !== null
-                  ? `${remainingChars.toLocaleString()} free characters left today`
-                  : ""}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={downloadAudio}>
+                  Download MP3
+                </Button>
+                {remainingChars !== null ? (
+                  <p className="text-xs text-muted-foreground">
+                    {remainingChars.toLocaleString()} free characters left today
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
           {status === "error" && error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-          <Button onClick={generate} disabled={status === "generating" || !voiceId || !text.trim()} className="w-full">
+          <Button
+            onClick={generate}
+            disabled={status === "generating" || !voiceId || !text.trim()}
+            className="w-full"
+          >
             {status === "generating" ? "Generating…" : "Generate"}
           </Button>
         </CardContent>

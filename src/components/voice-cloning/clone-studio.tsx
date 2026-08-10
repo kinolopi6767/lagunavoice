@@ -3,11 +3,19 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { VoiceRecord } from "@/lib/tts/types";
 
 type Status = "idle" | "uploading" | "cloning" | "done" | "error";
+
+function formatBytes(bytes: number) {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
 
 export function CloneStudio() {
   const [file, setFile] = useState<File | null>(null);
@@ -17,28 +25,39 @@ export function CloneStudio() {
   const [error, setError] = useState<string | null>(null);
   const [clonedVoice, setClonedVoice] = useState<VoiceRecord | null>(null);
 
+  const busy = status === "uploading" || status === "cloning";
+  const blocked = !file || !name.trim() || !consent || busy;
+
+  function reasonBlocked(): string | null {
+    if (busy) return null;
+    if (!file) return "Upload a sample recording to continue.";
+    if (!name.trim()) return "Give your clone a name.";
+    if (!consent) return "Confirm the rights consent to continue.";
+    return null;
+  }
+
   async function submit() {
-    if (!file || !name.trim() || !consent) return;
-    setStatus("cloning");
+    if (blocked) return;
+    setStatus("uploading");
     setError(null);
     setClonedVoice(null);
 
     try {
-      const buffer = await file.arrayBuffer();
-      const sampleBase64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-      // client-side size guard (25MB server cap)
+      const buffer = await file!.arrayBuffer();
       if (buffer.byteLength > 25 * 1024 * 1024) {
         setStatus("error");
         setError("Sample must be under 25 MB.");
         return;
       }
+      const sampleBase64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      setStatus("cloning");
 
       const res = await fetch("/api/voice-cloning", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sampleBase64,
-          sampleMime: file.type,
+          sampleMime: file!.type,
           name: name.trim(),
           consent: true,
         }),
@@ -61,12 +80,12 @@ export function CloneStudio() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-lg">Create your voice clone</CardTitle>
           <CardDescription>
-            Upload a 5–150 second recording of any voice you have the rights to.
-            The clone is private to your account and speaks 37 languages.
+            Upload a 5–150 second recording of a voice you have the rights to. The
+            clone is private to your account and speaks 37 languages.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -83,41 +102,77 @@ export function CloneStudio() {
 
           <div className="space-y-2">
             <Label htmlFor="clone-file">Sample audio (WAV or MP3, 5–150s, ≤25 MB)</Label>
-            <Input
+            <label
+              htmlFor="clone-file"
+              className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed p-4 text-center transition-colors hover:bg-muted"
+            >
+              <svg viewBox="0 0 24 24" className="size-6 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                <path d="M12 15V3m0 0l-4 4m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" strokeLinecap="round" />
+              </svg>
+              <span className="text-sm font-medium">
+                {file ? file.name : "Choose a recording"}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {file
+                  ? `${formatBytes(file.size)} — click to replace`
+                  : "WAV or MP3 · 5–150 seconds · up to 25 MB"}
+              </span>
+            </label>
+            <input
               id="clone-file"
               type="file"
               accept="audio/mpeg,audio/wav,audio/x-wav"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="sr-only"
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setError(null);
+              }}
             />
+            {file ? (
+              <p className="text-xs text-emerald-600">
+                Sample ready — name it, confirm consent, and clone.
+              </p>
+            ) : null}
           </div>
 
-          <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+          <label className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm">
             <input
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
-              className="mt-0.5"
+              className="mt-0.5 size-4 shrink-0 accent-[oklch(0.52_0.22_264)]"
             />
-            <span>
-              I confirm I own the rights to this voice sample and consent to it
-              being used to create a synthetic voice. It must not be the voice of
-              a public figure or anyone who has not given permission.
+            <span className="leading-5 text-foreground">
+              <span className="font-medium">Rights consent (required)</span> — I confirm I own
+              the rights to this voice sample and consent to it being used to create a synthetic
+              voice. It must not be the voice of a public figure or anyone who has not given
+              permission.
             </span>
           </label>
 
-          {status === "error" && error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {status === "error" && error ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              <p className="text-sm text-destructive">{error}</p>
+            </div>
+          ) : null}
 
-          <Button
-            onClick={submit}
-            disabled={!file || !name.trim() || !consent || status === "cloning"}
-            className="w-full"
-          >
-            {status === "cloning" ? "Cloning… (up to a minute)" : "Clone voice"}
-          </Button>
+          <div className="space-y-2">
+            <Button onClick={submit} disabled={blocked} className="w-full">
+              {status === "uploading"
+                ? "Uploading…"
+                : status === "cloning"
+                  ? "Cloning… (up to a minute)"
+                  : "Clone voice"}
+            </Button>
+            {!busy && blocked ? (
+              <p className="text-center text-xs text-muted-foreground">{reasonBlocked()}</p>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-lg">Your cloned voices</CardTitle>
           <CardDescription>
@@ -125,7 +180,13 @@ export function CloneStudio() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {status === "done" && clonedVoice ? (
+          {status === "cloning" ? (
+            <div className="space-y-2">
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-2 w-2/3" />
+              <p className="text-xs text-muted-foreground">Training your clone…</p>
+            </div>
+          ) : status === "done" && clonedVoice ? (
             <div className="rounded-md border bg-muted/40 p-4">
               <p className="font-medium">{clonedVoice.name}</p>
               <p className="text-xs text-muted-foreground">
@@ -137,13 +198,18 @@ export function CloneStudio() {
                 className="mt-2 w-full"
               />
               <p className="mt-2 text-xs text-emerald-600">
-                Clone created. Find it in the voice library and Studio.
+                Clone created. Find it in the voice library and Studio — premium credits
+                apply per character, like other premium voices.
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No clones yet. Create your first one on the left.
-            </p>
+            <div className="rounded-md border border-dashed p-8 text-center">
+              <p className="font-medium">No clones yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Create your first one on the left. Cloning costs premium credits per
+                character of generated speech.
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>

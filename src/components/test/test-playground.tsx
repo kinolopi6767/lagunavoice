@@ -113,6 +113,7 @@ export function TestPlayground() {
 
   // 3 ─ TTS
   const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("studio");
@@ -160,9 +161,11 @@ export function TestPlayground() {
         if (d?.voices?.length) {
           setVoices(d.voices);
           setVoiceId((prev) => prev ?? d.voices[0].id);
+        } else {
+          setVoicesError("The voice catalog is unavailable right now — free generation may still work if you pick a voice id manually.");
         }
       })
-      .catch(() => undefined);
+      .catch(() => setVoicesError("Could not reach the voice catalog."));
   }, []);
 
   useEffect(() => {
@@ -556,7 +559,9 @@ export function TestPlayground() {
               )}
               {!env.loading && !env.status?.supabaseConfigured && (
                 <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Label htmlFor="sandbox-name" className="sr-only">Sandbox name</Label>
                   <Input
+                    id="sandbox-name"
                     value={sandboxName}
                     onChange={(e) => setSandboxName(e.target.value)}
                     placeholder="sandbox name (referral code)"
@@ -709,8 +714,12 @@ export function TestPlayground() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Input placeholder="Search voices…" value={query} onChange={(e) => setQuery(e.target.value)} />
-              {voices.length === 0 && mode !== "demo" ? (
+              <Input placeholder="Search voices…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search voices" />
+              {voicesError ? (
+                <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                  {voicesError}
+                </p>
+              ) : voices.length === 0 && mode !== "demo" ? (
                 <div className="space-y-2">
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
@@ -734,7 +743,10 @@ export function TestPlayground() {
                     </button>
                   ))}
                   {filteredVoices.length === 0 && (
-                    <p className="text-sm text-muted-foreground">No voices match {`"${query}"`}.</p>
+                    <div className="rounded-md border border-dashed p-4 text-center">
+                      <p className="text-sm font-medium">No voices match {`"${query}"`}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Try a different name or clear the search.</p>
+                    </div>
                   )}
                 </div>
               )}

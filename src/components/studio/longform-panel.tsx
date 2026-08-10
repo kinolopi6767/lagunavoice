@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { VoiceRecord } from "@/lib/tts/types";
+
+import { VoicePicker } from "@/components/studio/voice-picker";
 
 const MAX_CHARS = 100_000;
+const STYLES = ["neutral", "cheerful", "calm", "serious", "excited"];
 
 interface JobState {
   status: "processing" | "completed" | "failed";
@@ -23,8 +23,6 @@ interface JobState {
 
 export function LongFormPanel() {
   const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
-  const [voices, setVoices] = useState<VoiceRecord[]>([]);
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [style, setStyle] = useState("neutral");
   const [job, setJob] = useState<JobState | null>(null);
@@ -35,22 +33,11 @@ export function LongFormPanel() {
   const audioBlobRef = useRef<Blob | null>(null);
 
   useEffect(() => {
-    fetch("/api/voices?limit=60&tier=free")
-      .then((r) => r.json() as Promise<{ voices: VoiceRecord[] }>)
-      .then((d) => {
-        setVoices(d.voices);
-        if (d.voices.length > 0) setVoiceId(d.voices[0].id);
-      })
-      .catch(() => setError("Could not load voices."));
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
 
-  const filtered = voices.filter((v) => v.name.toLowerCase().includes(query.toLowerCase()));
   const charsLeft = MAX_CHARS - Array.from(text).length;
 
   function stopPolling() {
@@ -66,6 +53,7 @@ export function LongFormPanel() {
     setJob({ status: "processing", total: 0, done: 0 });
     setAudioUrl(null);
     if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
+    audioBlobRef.current = null;
 
     try {
       const res = await fetch("/api/studio/longform", {
@@ -82,7 +70,6 @@ export function LongFormPanel() {
         return;
       }
 
-      // poll every 1.5s until done
       pollRef.current = setInterval(async () => {
         const r = await fetch(`/api/studio/longform/${data.jobId}`);
         const j = (await r.json()) as JobState;
@@ -127,38 +114,30 @@ export function LongFormPanel() {
     URL.revokeObjectURL(a.href);
   }
 
+  const progress = job?.total ? Math.round((job.done / job.total) * 100) : 0;
+
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader>
-        <CardTitle className="text-lg">Long-form</CardTitle>
+        <CardTitle className="text-lg">Long-form narration</CardTitle>
         <CardDescription>
-          Audiobook-length narration (up to 100k chars). Chunked, synthesized in
-          parallel, stitched into one MP3 with SRT subtitles.
+          Audiobook-length scripts (up to 100,000 characters). We chunk, synthesize in
+          parallel and stitch everything into one MP3 — with word-timed SRT subtitles.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-          <div className="space-y-3">
-            <Label>Voice</Label>
-            <Input placeholder="Search voices…" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-              {filtered.map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setVoiceId(v.id)}
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                    voiceId === v.id ? "border-primary bg-primary/10" : "hover:bg-muted"
-                  }`}
-                >
-                  <span className="block truncate font-medium">{v.name}</span>
-                  <span className="block text-xs text-muted-foreground">{v.language}</span>
-                </button>
-              ))}
-            </div>
+          <div className="min-w-0">
+            <VoicePicker
+              value={voiceId}
+              onSelect={setVoiceId}
+              limit={60}
+              label="Voice"
+              hint="Same library as quick generation."
+            />
           </div>
 
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <div className="space-y-2">
               <Label htmlFor="lf-text">Script</Label>
               <textarea
@@ -174,20 +153,23 @@ export function LongFormPanel() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Label className="shrink-0">Style</Label>
               <select
                 value={style}
                 onChange={(e) => setStyle(e.target.value)}
-                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
-                {["neutral", "cheerful", "calm", "serious", "excited"].map((s) => (
+                {STYLES.map((s) => (
                   <option key={s} value={s}>
                     {s[0].toUpperCase() + s.slice(1)}
                   </option>
                 ))}
               </select>
-              <Button onClick={start} disabled={job?.status === "processing" || !voiceId || !text.trim()}>
+              <Button
+                onClick={start}
+                disabled={job?.status === "processing" || !voiceId || !text.trim()}
+              >
                 {job?.status === "processing" ? "Generating…" : "Generate long-form"}
               </Button>
             </div>
@@ -197,16 +179,30 @@ export function LongFormPanel() {
         {job?.status === "processing" ? (
           <div className="space-y-2">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Chunk {job.done} of {job.total || "…"}</span>
-              <span>{job.total ? Math.round((job.done / job.total) * 100) : 0}%</span>
+              <span>
+                {job.total
+                  ? `Chunk ${job.done} of ${job.total}`
+                  : "Chunking script…"}
+              </span>
+              <span>{progress}%</span>
             </div>
-            <Skeleton className="h-2 w-full" />
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
             <p className="text-xs text-muted-foreground">Synthesizing chunks in parallel…</p>
           </div>
         ) : null}
 
         {job?.status === "failed" ? (
-          <p className="text-sm text-destructive">{job.error ?? "Generation failed."}</p>
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-sm text-destructive">{job.error ?? "Generation failed."}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              No credits were charged for failed generations.
+            </p>
+          </div>
         ) : null}
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
