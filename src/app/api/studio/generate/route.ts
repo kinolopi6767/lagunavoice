@@ -11,6 +11,13 @@ import {
   debitCredits,
   refundCredits,
 } from "@/lib/credits/ledger";
+import {
+  checkGenerationVelocity,
+  isBanned,
+  recordModerationStrike,
+} from "@/lib/abuse/rules";
+import { isProviderKillSwitched } from "@/lib/ops/flags";
+import { recordProviderUsage } from "@/lib/costs/store";
 
 /**
  * POST /api/studio/generate — Studio generation.
@@ -19,8 +26,9 @@ import {
  * Premium (Typecast) voices: 1 credit = 1 char, debited atomically before
  * synthesis and refunded automatically if synthesis fails.
  *
- * Requires Supabase session + DB for premium. Guests and pre-DB setups get
- * free voices only (BillingUnavailableError).
+ * Abuse guards (research/08): ban check → moderation (3 strikes → temp ban)
+ * → generation velocity → provider kill-switch → daily caps → synthesis.
+ * Every call records provider usage for COGS tracking.
  */
 
 const MAX_CHARS = 5_000;
@@ -54,9 +62,32 @@ export async function POST(request: Request) {
   const { text, voiceId, style, pitch, rate } = parsed.data;
   const charCount = Array.from(text).length;
 
-  // 1. Moderation (skip when not configured)
+  // 0a. Session + ban check
+  let sessionUserId: string | undefined;
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase.auth.getUser();
+    if (data.user) sessionUserId = data.user.id;
+  } catch {
+    // Supabase not configured — guests only
+  }
+  if (sessionUserId) {
+    const ban = isBanned(sessionUserId);
+    if (ban) {
+      return NextResponse.json(
+        { error: "Account temporarily restricted. Contact support.", code: "account_restricted" },
+        { status: 403 },
+      );
+    }
+    checkGenerationVelocity(`user:${sessionUserId}`, sessionUserId);
+  } else {
+    checkGenerationVelocity(`ip:${ip}`);
+  }
+
+  // 1. Moderation (skip when not configured) — 3 strikes → temp ban
   const moderation = await moderateText(text);
   if (moderation.verdict === "block") {
+    if (sessionUserId) recordModerationStrike(sessionUserId);
     return NextResponse.json(
       { error: "This text can't be used.", code: "content_policy" },
       { status: 400 },
@@ -64,14 +95,6 @@ export async function POST(request: Request) {
   }
 
   // 2. Voice must exist (stock + the caller's custom clones)
-  let sessionUserId: string | undefined;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (data.user) sessionUserId = data.user.id;
-  } catch {
-    // Supabase not configured — stock voices only
-  }
   const voice = await getVoiceById(voiceId, sessionUserId);
   if (!voice) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
@@ -80,6 +103,15 @@ export async function POST(request: Request) {
   // cloned voices are owner-only
   if (voice.isCustom && voice.ownerUserId !== sessionUserId) {
     return NextResponse.json({ error: "Voice not found.", code: "not_found" }, { status: 404 });
+  }
+
+  // 2b. Provider kill-switch
+  const disabled = isProviderKillSwitched(voice.provider);
+  if (disabled) {
+    return NextResponse.json(
+      { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
   }
 
   // 3a. Free voices — per-IP daily caps, no credits
@@ -101,6 +133,7 @@ export async function POST(request: Request) {
     try {
       const provider = getProvider(voice.provider);
       const result = await provider.synthesize({ text, voice, style, pitch, rate });
+      await recordProviderUsage(voice.provider, charCount, 0, { tier: voice.tier === "free" ? "premium" : undefined, errored: false });
       return NextResponse.json({
         audioBase64: result.audio.toString("base64"),
         mimeType: result.mimeType,
@@ -111,6 +144,7 @@ export async function POST(request: Request) {
       });
     } catch (err) {
       console.error("[studio] free synthesis failed", err);
+      await recordProviderUsage(voice.provider, 0, 0, { errored: true });
       return NextResponse.json(
         { error: "We could not reach the voice engine. Please try again.", code: "voice_engine_unavailable" },
         { status: 503 },
@@ -143,6 +177,7 @@ export async function POST(request: Request) {
     });
 
     const result = await provider.synthesize({ text, voice, style, pitch, rate });
+    await recordProviderUsage(voice.provider, charCount, 0, { tier: voice.tier === "flagship" ? "flagship" : "premium" });
 
     return NextResponse.json({
       audioBase64: result.audio.toString("base64"),

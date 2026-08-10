@@ -1,15 +1,26 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { creditLedger, profiles } from "@/db/schema";
+import {
+  InsufficientCreditsError as MemoryInsufficient,
+  memoryApply,
+  memoryGetBalance,
+  memoryGrantReferralBonus,
+  memoryGrantSignupBonus,
+  memoryLedgerHistory,
+  type LedgerEntry,
+} from "@/lib/credits/memory-store";
 
 /**
- * Credit ledger — the money path. Append-only ledger + guarded balance update.
- * Requires the Postgres database (Supabase). Until it exists, premium
- * generation stays locked (the Studio route reports "billing not configured").
+ * Credit ledger — the money path.
  *
- * Atomicity: the guarded UPDATE ... WHERE credits_balance >= :n either
- * succeeds or returns no row — concurrent requests cannot overspend.
- * Refunds re-credit and append a `refund` ledger row.
+ * Two backends with identical semantics:
+ *  - Postgres (Supabase): guarded UPDATE + append-only ledger rows
+ *  - in-memory fallback: used until DATABASE_URL is configured, so the whole
+ *    payment flow can be built and demoed without a database
+ *
+ * Atomicity: the DB path uses a WHERE-guarded update inside a transaction;
+ * the memory path is atomic because the process is single-threaded.
  */
 
 export class InsufficientCreditsError extends Error {
@@ -19,6 +30,7 @@ export class InsufficientCreditsError extends Error {
   }
 }
 
+/** legacy alias kept for routes that guard pre-billing states */
 export class BillingUnavailableError extends Error {
   constructor() {
     super("Billing is not configured yet");
@@ -26,7 +38,10 @@ export class BillingUnavailableError extends Error {
   }
 }
 
+const dbConfigured = () => Boolean(process.env.DATABASE_URL);
+
 export async function getBalance(userId: string): Promise<number> {
+  if (!dbConfigured()) return memoryGetBalance(userId);
   const [row] = await db
     .select({ balance: profiles.creditsBalance })
     .from(profiles)
@@ -45,8 +60,20 @@ export async function debitCredits(opts: {
   description?: string;
 }): Promise<number> {
   const { userId, amount, generationId, description } = opts;
-
   if (amount <= 0) throw new Error("debit amount must be positive");
+
+  if (!dbConfigured()) {
+    try {
+      return memoryApply(userId, -amount, {
+        type: "generation_debit",
+        generationId,
+        description: description ?? "generation",
+      });
+    } catch (err) {
+      if (err instanceof MemoryInsufficient) throw new InsufficientCreditsError();
+      throw err;
+    }
+  }
 
   const result = await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -58,9 +85,7 @@ export async function debitCredits(opts: {
       .where(and(eq(profiles.id, userId), sql`${profiles.creditsBalance} >= ${amount}`))
       .returning({ balance: profiles.creditsBalance });
 
-    if (!updated) {
-      return null;
-    }
+    if (!updated) return null;
 
     await tx.insert(creditLedger).values({
       userId,
@@ -74,15 +99,11 @@ export async function debitCredits(opts: {
     return updated.balance;
   });
 
-  if (result === null) {
-    throw new InsufficientCreditsError();
-  }
+  if (result === null) throw new InsufficientCreditsError();
   return result;
 }
 
-/**
- * Refund `amount` credits for a failed generation. Always succeeds (adds back).
- */
+/** Refund credits for a failed generation. Always succeeds (adds back). */
 export async function refundCredits(opts: {
   userId: string;
   amount: number;
@@ -90,6 +111,14 @@ export async function refundCredits(opts: {
   description?: string;
 }): Promise<number> {
   const { userId, amount, generationId, description } = opts;
+
+  if (!dbConfigured()) {
+    return memoryApply(userId, amount, {
+      type: "refund",
+      generationId,
+      description: description ?? "refunded failed generation",
+    });
+  }
 
   return db.transaction(async (tx) => {
     const [updated] = await tx
@@ -114,12 +143,68 @@ export async function refundCredits(opts: {
   });
 }
 
-/** ledger history for the dashboard (last N entries) */
-export async function ledgerHistory(userId: string, limit = 50) {
-  return db
+/** credit an order/allowance — used by the payment webhook */
+export async function credit(userId: string, amount: number, description: string): Promise<number> {
+  if (!dbConfigured()) {
+    return memoryApply(userId, amount, { type: "purchase", description });
+  }
+
+  return db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(profiles)
+      .set({
+        creditsBalance: sql`${profiles.creditsBalance} + ${amount}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(profiles.id, userId))
+      .returning({ balance: profiles.creditsBalance });
+
+    await tx.insert(creditLedger).values({
+      userId,
+      type: "purchase",
+      amount,
+      balanceAfter: updated?.balance ?? amount,
+      description,
+    });
+
+    return updated?.balance ?? amount;
+  });
+}
+
+/** signup bonus — once per account */
+export async function grantSignupBonus(userId: string): Promise<number> {
+  if (!dbConfigured()) return memoryGrantSignupBonus(userId);
+  const balance = await getBalance(userId);
+  if (balance > 0) return balance;
+  return credit(userId, 2_000, "signup bonus");
+}
+
+/** referral bonus for the referrer */
+export async function grantReferralBonus(userId: string, referrerId: string): Promise<void> {
+  if (!dbConfigured()) {
+    memoryGrantReferralBonus(userId, referrerId);
+    return;
+  }
+  await credit(referrerId, 2_500, `referral bonus for inviting ${userId.slice(0, 8)}`);
+}
+
+export async function ledgerHistory(userId: string, limit = 50): Promise<LedgerEntry[]> {
+  if (!dbConfigured()) return memoryLedgerHistory(userId, limit);
+  const rows = await db
     .select()
     .from(creditLedger)
     .where(eq(creditLedger.userId, userId))
     .orderBy(sql`${creditLedger.createdAt} desc`)
     .limit(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.userId,
+    type: r.type,
+    amount: r.amount,
+    balanceAfter: r.balanceAfter,
+    generationId: r.generationId ?? undefined,
+    orderId: r.orderId ?? undefined,
+    description: r.description ?? undefined,
+    createdAt: r.createdAt.getTime(),
+  }));
 }
