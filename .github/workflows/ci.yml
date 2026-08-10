@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Secret leak guard
+        run: |
+          ! grep -rEi '(TYPECAST_API_KEY|DEEPGRAM_API_KEY|RAZORPAY_KEY_SECRET|SUPABASE_SERVICE_ROLE_KEY)=[A-Za-z0-9]' src/ || \
+            (echo "SECRET FOUND IN SOURCE" && exit 1)
