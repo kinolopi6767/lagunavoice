@@ -33,19 +33,21 @@ function collectStream(stream: Readable): Promise<Buffer> {
   });
 }
 
-/** read word/sentence boundary metadata to compute total duration in ms */
-function durationFromMetadata(
+/** read word/sentence boundary metadata to compute duration + word timestamps */
+function collectMetadata(
   stream: Readable | null,
   resolveWhen: Promise<unknown>,
-): Promise<number> {
+): Promise<{ durationMs: number; words: Array<{ word: string; startMs: number; endMs: number }> }> {
   return new Promise((resolve) => {
-    if (!stream) return resolve(0);
+    const empty = { durationMs: 0, words: [] };
+    if (!stream) return resolve(empty);
     let maxEndMs = 0;
+    const words: Array<{ word: string; startMs: number; endMs: number }> = [];
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
-      resolve(Math.round(maxEndMs));
+      resolve({ durationMs: Math.round(maxEndMs), words });
     };
     stream.on("data", (line: Buffer) => {
       try {
@@ -56,8 +58,16 @@ function durationFromMetadata(
           Metadata?: Array<{
             Type?: string;
             type?: string;
-            Data?: { Offset?: number; Duration?: number };
-            data?: { Offset?: number; Duration?: number };
+            Data?: {
+              Offset?: number;
+              Duration?: number;
+              text?: { Text?: string; text?: string };
+            };
+            data?: {
+              Offset?: number;
+              Duration?: number;
+              text?: { Text?: string; text?: string };
+            };
           }>;
         };
         for (const item of chunk.Metadata ?? []) {
@@ -65,10 +75,13 @@ function durationFromMetadata(
           const data = item.Data ?? item.data;
           if (kind === "SentenceBoundary" || kind === "WordBoundary") {
             // offset/duration are in 100-nanosecond units
-            maxEndMs = Math.max(
-              maxEndMs,
-              ((data?.Offset ?? 0) + (data?.Duration ?? 0)) / 10_000,
-            );
+            const offsetMs = (data?.Offset ?? 0) / 10_000;
+            const durationMs = (data?.Duration ?? 0) / 10_000;
+            maxEndMs = Math.max(maxEndMs, offsetMs + durationMs);
+            if (kind === "WordBoundary") {
+              const word = data?.text?.Text ?? data?.text?.text;
+              if (word) words.push({ word, startMs: offsetMs, endMs: offsetMs + durationMs });
+            }
           }
         }
       } catch {
@@ -92,7 +105,7 @@ export class EdgeTtsProvider implements TtsProvider {
     voiceName: string,
     text: string,
     prosody: ProsodyOptions,
-  ): Promise<{ audio: Buffer; durationMs: number }> {
+  ): Promise<{ audio: Buffer; durationMs: number; words: SynthesizeResult["words"] }> {
     const tts = new MsEdgeTTS();
     try {
       await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3, {
@@ -101,9 +114,9 @@ export class EdgeTtsProvider implements TtsProvider {
       });
       const { audioStream, metadataStream } = tts.toStream(text, prosody);
       const audioDone = collectStream(audioStream);
-      const durationMs = await durationFromMetadata(metadataStream, audioDone);
+      const meta = await collectMetadata(metadataStream, audioDone);
       const audio = await audioDone;
-      return { audio, durationMs };
+      return { audio, durationMs: meta.durationMs, words: meta.words };
     } finally {
       tts.close();
     }
@@ -137,7 +150,7 @@ export class EdgeTtsProvider implements TtsProvider {
     const rate = req.rate ?? style.rate;
     const pitch = req.pitch !== undefined ? `${req.pitch >= 0 ? "+" : ""}${req.pitch}st` : style.pitch;
 
-    const { audio, durationMs } = await this.synth(req.voice.providerVoiceId, req.text, {
+    const { audio, durationMs, words } = await this.synth(req.voice.providerVoiceId, req.text, {
       rate,
       pitch,
     });
@@ -147,6 +160,7 @@ export class EdgeTtsProvider implements TtsProvider {
       mimeType: "audio/mpeg",
       durationMs,
       charCount: Array.from(req.text).length,
+      words,
     };
   }
 

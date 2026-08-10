@@ -130,11 +130,14 @@ export class TypecastProvider implements TtsProvider {
         audio_pitch: req.pitch ?? 0,
         audio_tempo: req.rate ?? 1.0,
       },
+      // fixed seed per long-form job → identical prosody across chunks
+      seed: req.seed,
     };
 
-    const res = await this.request("/v1/text-to-speech", {
+    // word-level timestamps (research/07 A.7): same credit cost, best SRT source
+    const res = await this.request("/v1/text-to-speech/with-timestamps", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, granularity: "word" }),
     });
 
     if (!res.ok) {
@@ -143,13 +146,35 @@ export class TypecastProvider implements TtsProvider {
       throw new Error(`Typecast synthesis failed (${res.status})`);
     }
 
-    const audio = Buffer.from(await res.arrayBuffer());
+    const data = (await res.json()) as {
+      audio?: string; // base64
+      audio_base64?: string;
+      words?: Array<{ text?: string; start?: number; end?: number }>;
+      characters?: Array<{ text?: string; start?: number; end?: number }>;
+    };
+
+    const audioB64 = data.audio ?? data.audio_base64;
+    if (!audioB64) {
+      throw new Error("Typecast response missing audio");
+    }
+    const audio = Buffer.from(audioB64, "base64");
+
+    // start/end are in SECONDS per the API contract
+    const words = (data.words ?? data.characters ?? [])
+      .filter((w) => typeof w.start === "number" && typeof w.end === "number")
+      .map((w) => ({
+        word: w.text ?? "",
+        startMs: Math.round((w.start ?? 0) * 1_000),
+        endMs: Math.round((w.end ?? 0) * 1_000),
+      }))
+      .filter((w) => w.word.length > 0);
 
     return {
       audio,
       mimeType: "audio/mpeg",
-      durationMs: 0, // Typecast does not return duration on the audio body
+      durationMs: words.length > 0 ? words[words.length - 1].endMs : 0,
       charCount: Array.from(req.text).length,
+      words: words.length > 0 ? words : undefined,
     };
   }
 

@@ -41,8 +41,16 @@ export interface SynthesizeRequest {
   rate?: number;
   /** per-request usage tag (Deepgram `tag=lv:...` for COGS reporting) */
   tag?: string;
+  /** voice-consistency seed for long-form (Typecast; ignored elsewhere) */
+  seed?: number;
   /** inline pronunciation overrides (Deepgram IPA; ignored elsewhere) */
   pronunciations?: Array<{ word: string; pronounce: string }>;
+}
+
+export interface WordTimestamp {
+  word: string;
+  startMs: number;
+  endMs: number;
 }
 
 export interface SynthesizeResult {
@@ -50,6 +58,8 @@ export interface SynthesizeResult {
   mimeType: "audio/mpeg" | "audio/wav";
   durationMs: number;
   charCount: number;
+  /** word-level timestamps (edge WordBoundary · Typecast /with-timestamps · Deepgram via STT round-trip) */
+  words?: WordTimestamp[];
 }
 
 export interface TtsProvider {

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { StudioGenerator } from "@/components/studio/studio-generator";
+import { LongFormPanel } from "@/components/studio/longform-panel";
 
 export const metadata: Metadata = {
   title: "Studio — LugunaVoice",
   description:
-    "Turn scripts into voiceovers. Free AI voices today; premium, flagship, long-form and cloning arriving with credits.",
+    "Turn scripts into voiceovers: single-shot generation, long-form narration with SRT subtitles. Free, premium and flagship voices.",
 };
 
 export default function StudioPage() {
@@ -16,7 +17,17 @@ export default function StudioPage() {
           Script in, audio out. Free voices now — premium and flagship unlock with credits.
         </p>
       </div>
-      <StudioGenerator />
+
+      <div className="space-y-8">
+        <section>
+          <h2 className="mb-3 text-lg font-semibold">Quick generation</h2>
+          <StudioGenerator />
+        </section>
+        <section>
+          <h2 className="mb-3 text-lg font-semibold">Long-form narration</h2>
+          <LongFormPanel />
+        </section>
+      </div>
     </main>
   );
 }
