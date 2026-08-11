@@ -24,11 +24,16 @@ const FAQ = [
 export function Faq() {
   return (
     <section id="faq" className="mx-auto w-full max-w-3xl px-4 py-16 sm:px-6">
-      <h2 className="text-center text-3xl font-bold tracking-tight">Questions, answered</h2>
+      <h2 className="text-center text-3xl font-bold tracking-tight">
+        Questions, <span className="text-gradient">answered</span>
+      </h2>
       <div className="mt-8 space-y-3">
         {FAQ.map((item) => (
-          <details key={item.q} className="rounded-lg border p-4">
-            <summary className="cursor-pointer font-medium">{item.q}</summary>
+          <details
+            key={item.q}
+            className="rounded-lg border px-4 py-3 transition-colors open:border-primary/30 open:bg-primary/[0.02]"
+          >
+            <summary className="cursor-pointer font-medium marker:text-primary">{item.q}</summary>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.a}</p>
           </details>
         ))}

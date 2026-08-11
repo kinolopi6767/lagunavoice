@@ -1,22 +1,21 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { LogoMark } from "@/components/app/logo-mark";
 
 export function Nav() {
   return (
     <header className="sticky top-0 z-50 border-b bg-background/90 backdrop-blur">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-            LV
-          </span>
+          <LogoMark />
           <span className="hidden font-semibold sm:inline">LugunaVoice</span>
         </Link>
 
         <nav className="hidden items-center gap-5 text-sm text-muted-foreground md:flex">
-          <Link href="/voices" className="hover:text-foreground">Voice library</Link>
-          <Link href="/studio" className="hover:text-foreground">Studio</Link>
-          <Link href="/developers" className="hover:text-foreground">Developers</Link>
-          <a href="#pricing" className="hover:text-foreground">Pricing</a>
+          <Link href="/voices" className="transition-colors hover:text-foreground">Voice library</Link>
+          <Link href="/studio" className="transition-colors hover:text-foreground">Studio</Link>
+          <Link href="/developers" className="transition-colors hover:text-foreground">Developers</Link>
+          <a href="#pricing" className="transition-colors hover:text-foreground">Pricing</a>
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">

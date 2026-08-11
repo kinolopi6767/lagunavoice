@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
 const PLANS = [
@@ -37,37 +38,51 @@ const PLANS = [
 export function Pricing() {
   return (
     <section id="pricing" className="mx-auto w-full max-w-6xl px-4 py-16 sm:px-6">
-      <h2 className="text-center text-3xl font-bold tracking-tight">Simple, honest pricing</h2>
+      <h2 className="text-center text-3xl font-bold tracking-tight">
+        Simple, <span className="text-gradient">honest</span> pricing
+      </h2>
       <p className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">
         1 credit = 1 character of premium voice. Flagship voices cost 2 credits.
         Free voices cost nothing. Credits never expire.
       </p>
       <div className="mt-10 grid gap-4 md:grid-cols-3">
         {PLANS.map((p) => (
-          <Card key={p.name} className={p.highlighted ? "border-primary" : ""}>
-            <CardHeader>
-              <CardTitle>{p.name}</CardTitle>
-              <CardDescription>{p.description}</CardDescription>
-              <div className="mt-3 flex items-baseline gap-1">
-                <span className="text-3xl font-bold">{p.price}</span>
-                <span className="text-sm text-muted-foreground">{p.period}</span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 text-sm">
-                {p.features.map((f) => (
-                  <li key={f} className="flex gap-2">
-                    <span className="text-primary">✓</span> {f}
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-            <CardFooter>
-              <Button className="w-full" variant={p.highlighted ? "default" : "outline"} asChild>
-                <a href={p.href}>{p.cta}</a>
-              </Button>
-            </CardFooter>
-          </Card>
+          <div
+            key={p.name}
+            className={
+              p.highlighted
+                ? "rounded-2xl bg-gradient-to-br from-grad-a to-grad-b p-px shadow-lg shadow-grad-b/20"
+                : "rounded-2xl border"
+            }
+          >
+            <Card className={p.highlighted ? "h-full rounded-[calc(var(--radius)+1px)] border-0 shadow-none" : "h-full"}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>{p.name}</CardTitle>
+                  {p.highlighted ? <Badge>Most popular</Badge> : null}
+                </div>
+                <CardDescription>{p.description}</CardDescription>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="text-3xl font-bold">{p.price}</span>
+                  <span className="text-sm text-muted-foreground">{p.period}</span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2 text-sm">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex gap-2">
+                      <span className="text-primary">✓</span> {f}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+              <CardFooter>
+                <Button className="w-full" variant={p.highlighted ? "default" : "outline"} asChild>
+                  <a href={p.href}>{p.cta}</a>
+                </Button>
+              </CardFooter>
+            </Card>
+          </div>
         ))}
       </div>
       <p className="mt-6 text-center text-sm text-muted-foreground">

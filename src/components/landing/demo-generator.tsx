@@ -33,6 +33,12 @@ export function DemoGenerator() {
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   useEffect(() => {
+    return () => {
+      if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!siteKey || !captchaRef.current) return;
     const el = captchaRef.current;
     window.turnstile?.render(el, {
@@ -96,9 +102,16 @@ export function DemoGenerator() {
   const selectedVoice = DEMO_VOICES.find((v) => v.id === voiceId);
 
   return (
-    <Card className="w-full">
+    <Card className="w-full rounded-[calc(var(--radius)+1px)] border-0 shadow-none">
       <CardHeader>
-        <CardTitle className="text-xl">Try it now — no account needed</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-xl">
+          <span className="flex size-5 items-center justify-center rounded-md bg-gradient-to-br from-grad-a to-grad-b">
+            <svg viewBox="0 0 24 24" className="size-3 text-white" fill="currentColor" aria-hidden>
+              <path d="M8 5.5v13a1 1 0 0 0 1.53.85l10.2-6.5a1 1 0 0 0 0-1.7L9.53 4.65A1 1 0 0 0 8 5.5Z" />
+            </svg>
+          </span>
+          Try it now — no account needed
+        </CardTitle>
         <CardDescription>
           The real generator, running a free voice. Press generate and listen.
         </CardDescription>
@@ -163,7 +176,7 @@ export function DemoGenerator() {
         ) : null}
 
         {audioUrl && status === "ready" ? (
-          <div className="rounded-md border bg-muted/40 p-3">
+          <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
             <audio controls src={audioUrl} className="w-full" />
             <p className="mt-1 text-xs text-muted-foreground">
               {selectedVoice?.name} · {style} ·{" "}
