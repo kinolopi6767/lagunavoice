@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
 import { StudioGenerator } from "@/components/studio/studio-generator";
 import { LongFormPanel } from "@/components/studio/longform-panel";
 
@@ -13,12 +14,11 @@ export default function StudioPage() {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">Studio</h1>
-          <p className="mt-2 text-muted-foreground">
-            Script in, audio out. Free voices now — premium and flagship unlock with credits.
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="Text to speech"
+          title="Studio"
+          description="Script in, audio out. Free voices now — premium and flagship unlock with credits."
+        />
 
         <div className="space-y-8">
           <section>

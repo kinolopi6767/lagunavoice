@@ -88,12 +88,13 @@ export function CloneStudio() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle className="text-lg">Create your voice clone</CardTitle>
-          <CardDescription>
-            Upload a 5–150 second recording of a voice you have the rights to. The
-            clone is private to your account and speaks 37 languages.
+      <div className="rounded-2xl bg-gradient-to-br from-grad-a to-grad-b p-px shadow-sm shadow-grad-b/20">
+        <Card className="min-w-0 rounded-[calc(1rem-1px)]">
+          <CardHeader>
+            <CardTitle className="text-lg">Create your voice clone</CardTitle>
+            <CardDescription>
+              Upload a 5–150 second recording of a voice you have the rights to. The
+              clone is private to your account and speaks 37 languages.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -179,6 +180,7 @@ export function CloneStudio() {
           </div>
         </CardContent>
       </Card>
+      </div>
 
       <Card className="min-w-0">
         <CardHeader>

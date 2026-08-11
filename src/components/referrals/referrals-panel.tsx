@@ -160,25 +160,28 @@ export function ReferralsPanel() {
             </Card>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Your referral code</CardTitle>
-              <CardDescription>
-                Share this code with friends. When they claim it at signup, you both earn.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-center font-mono text-lg font-semibold tracking-wide">
-                {summary.code}
-              </code>
-              <Button onClick={copyCode} disabled={copied}>
-                {copied ? "Copied!" : "Copy code"}
-              </Button>
-              <Button variant="outline" onClick={copyShareLink} disabled={copied}>
-                {copied ? "Copied!" : "Copy share link"}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-grad-a/15 via-card to-grad-b/15 p-6 shadow-sm">
+            <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_70%_80%_at_70%_20%,black,transparent)]" />
+            <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-primary">Your referral code</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Share it with friends. When they claim it at signup, you both earn.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="rounded-md border bg-background/80 px-3 py-2 font-mono text-lg font-semibold tracking-wide">
+                  {summary.code}
+                </code>
+                <Button onClick={copyCode} disabled={copied}>
+                  {copied ? "Copied!" : "Copy code"}
+                </Button>
+                <Button variant="outline" onClick={copyShareLink} disabled={copied}>
+                  {copied ? "Copied!" : "Copy share link"}
+                </Button>
+              </div>
+            </div>
+          </div>
         </>
       ) : null}
 

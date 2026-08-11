@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
 import { BillingDashboard } from "@/components/billing/billing-dashboard";
 
 export const metadata: Metadata = {
@@ -12,13 +13,11 @@ export default function BillingPage() {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">Credits &amp; billing</h1>
-          <p className="mt-2 text-muted-foreground">
-            Packs never expire. Premium voices use 1 credit per character, flagship voices 2 —
-            failed generations are refunded automatically.
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="Billing"
+          title="Credits & billing"
+          description="Packs never expire. Premium voices use 1 credit per character, flagship voices 2 — failed generations are refunded automatically."
+        />
         <BillingDashboard />
       </main>
     </AppShell>

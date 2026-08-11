@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CodeBlock } from "@/components/developers/code-block";
 
@@ -73,15 +74,18 @@ const CODES = [
 export function DevelopersDocs() {
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Developer documentation</h1>
-        <p className="mt-2 text-muted-foreground">
-          Generate speech from your own backend. Create a{" "}
-          <Link href="/api-keys" className="underline underline-offset-4">scoped API key</Link>,
-          send text and a voice id, then poll until the audio is ready. Every request is
-          billed idempotently — retries never double-charge you.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="REST API"
+        title="Developer documentation"
+        description={
+          <>
+            Generate speech from your own backend. Create a{" "}
+            <Link href="/api-keys" className="underline underline-offset-4">scoped API key</Link>,
+            send text and a voice id, then poll until the audio is ready. Every request is
+            billed idempotently — retries never double-charge you.
+          </>
+        }
+      />
 
       <div>
         <h2 className="mb-1 text-xl font-semibold">Quickstart</h2>

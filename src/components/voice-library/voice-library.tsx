@@ -93,7 +93,7 @@ function VoiceCard({
     voice.tier === "premium" ? "Premium" : voice.tier === "flagship" ? "Flagship" : "Free";
 
   return (
-    <Card className={cn("p-4", isFavorite && "ring-1 ring-primary/40")}>
+    <Card className={cn("p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md hover:shadow-grad-b/10", isFavorite && "ring-1 ring-primary/40")}>
       <CardContent className="flex items-center justify-between gap-3 p-0">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium" title={voice.name}>{voice.name}</p>
@@ -117,7 +117,7 @@ function VoiceCard({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className={cn("size-8", playing && "bg-gradient-to-br from-grad-a to-grad-b text-white")}
             onClick={togglePreview}
             aria-label={`Preview ${voice.name}`}
           >
@@ -216,7 +216,7 @@ export function VoiceLibrary() {
             className={cn(
               "rounded-full border px-3 py-1.5 text-sm transition-colors",
               tier === t.id
-                ? "border-primary bg-primary text-primary-foreground"
+                ? "border-transparent bg-gradient-to-br from-grad-a to-grad-b text-white shadow-sm shadow-grad-b/30"
                 : "border-border hover:bg-muted",
             )}
           >
@@ -229,7 +229,7 @@ export function VoiceLibrary() {
           className={cn(
             "ml-auto flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors",
             showFavorites
-              ? "border-primary bg-primary text-primary-foreground"
+              ? "border-transparent bg-gradient-to-br from-grad-a to-grad-b text-white shadow-sm shadow-grad-b/30"
               : "border-border hover:bg-muted",
           )}
         >

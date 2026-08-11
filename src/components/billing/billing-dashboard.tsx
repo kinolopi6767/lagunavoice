@@ -159,21 +159,17 @@ export function BillingDashboard() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Credit balance</CardTitle>
-          <CardDescription>
-            {balance.toLocaleString()} credits — premium voices use 1 credit per character,
-            flagship voices 2.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-end justify-between gap-4">
-          <p className="text-4xl font-bold tabular-nums">{balance.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground">
-            ≈ {Math.floor(balance / 1000).toLocaleString()}k characters of premium speech
+      <div className="relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-grad-a/15 via-card to-grad-b/15 p-6 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_70%_80%_at_70%_20%,black,transparent)]" />
+        <div className="relative">
+          <p className="text-sm font-medium text-primary">Credit balance</p>
+          <p className="mt-1 text-4xl font-bold tabular-nums">{balance.toLocaleString()}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            ≈ {Math.floor(balance / 1000).toLocaleString()}k characters of premium speech ·
+            premium 1 credit/char · flagship 2
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {CREDIT_PACKS.map((pack) => (

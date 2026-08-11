@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -174,16 +175,15 @@ export function AdminDashboard() {
     <div className="space-y-6">
       {message ? <p className="text-sm text-primary">{message}</p> : null}
 
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Admin</h1>
-        <p className="mt-2 text-muted-foreground">
-          Manual credits, order confirmation, abuse flags, provider kill-switches and COGS.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Ops console"
+        title="Admin"
+        description="Manual credits, order confirmation, abuse flags, provider kill-switches and COGS."
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">First account balance</CardTitle></CardHeader>
+        <Card className="border-primary/20 bg-gradient-to-br from-grad-a/10 to-grad-b/10">
+          <CardHeader className="pb-2"><CardTitle className="text-sm text-primary">First account balance</CardTitle></CardHeader>
           <CardContent><p className="text-2xl font-bold">{data.balance?.toLocaleString() ?? "—"}</p></CardContent>
         </Card>
         <Card>

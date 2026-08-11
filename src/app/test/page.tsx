@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
 import { TestPlayground } from "@/components/test/test-playground";
 
 export const metadata: Metadata = {
@@ -18,13 +19,11 @@ export default function TestPage() {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Local test playground</h1>
-        <p className="mt-2 text-muted-foreground">
-          Same dashboard as the Studio, wired to every endpoint — sandbox sessions, v1 API keys,
-          all TTS engines, credits &amp; payments. Runs without a database (in-memory). Temporary.
-        </p>
-      </div>
+        <PageHeader
+          eyebrow="Developer tools"
+          title="Local test playground"
+          description="Same dashboard as the Studio, wired to every endpoint — sandbox sessions, v1 API keys, all TTS engines, credits & payments. Runs without a database (in-memory). Temporary."
+        />
 
       <div className="space-y-8">
         <TestPlayground />
