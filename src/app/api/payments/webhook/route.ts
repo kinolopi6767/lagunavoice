@@ -4,6 +4,7 @@ import {
   verifyWebhookSignature,
 } from "@/lib/payments/razorpay";
 import {
+  assertAmountMatchesOrder,
   confirmOrderPaid,
   getOrder,
   hasWebhookProcessed,
@@ -54,6 +55,17 @@ export async function POST(request: Request) {
 
   if (!captured) {
     return NextResponse.json({ ok: true, ignored: true });
+  }
+
+  // amount integrity: never credit more than the pack price (INR paise)
+  const paidAmount = event.payload?.payment?.entity?.amount;
+  if (typeof paidAmount === "number" && paidAmount > 0) {
+    try {
+      assertAmountMatchesOrder(order, paidAmount, "INR");
+    } catch (err) {
+      console.error("[webhook] amount mismatch — NOT crediting", err);
+      return NextResponse.json({ error: "Amount mismatch.", code: "amount_mismatch" }, { status: 400 });
+    }
   }
 
   await confirmOrderPaid(order.id, { webhookId: event.id });

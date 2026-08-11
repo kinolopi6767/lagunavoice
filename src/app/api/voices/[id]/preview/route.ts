@@ -3,7 +3,9 @@ import { getProvider } from "@/lib/tts/registry";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { getPreview, setPreview } from "@/lib/cache/preview";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
 import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
+import { recordProviderUsage } from "@/lib/costs/store";
 
 export const dynamic = "force-dynamic";
 
@@ -68,8 +70,7 @@ export async function GET(
   }
 
   // per-IP daily preview cap (protects provider spend)
-  const xff = request.headers.get("x-forwarded-for");
-  const ip = xff?.split(",")[0]?.trim() || "unknown";
+  const ip = clientIp(request);
   if (!consumePreview(ip)) {
     return NextResponse.json(
       { error: "Preview limit reached for today.", code: "daily_limit_exceeded" },
@@ -86,6 +87,11 @@ export async function GET(
     });
 
     setPreview(cacheKey, result.audio, result.mimeType);
+    // previews cost the provider money too — record for COGS tracking
+    await recordProviderUsage(voice.provider, result.charCount, 0, {
+      tier: voice.tier === "free" ? undefined : voice.tier,
+      errored: false,
+    });
 
     return new NextResponse(new Uint8Array(result.audio), {
       headers: {

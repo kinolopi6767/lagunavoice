@@ -183,7 +183,7 @@ export function AdminDashboard() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Balance (demo user)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">First account balance</CardTitle></CardHeader>
           <CardContent><p className="text-2xl font-bold">{data.balance?.toLocaleString() ?? "—"}</p></CardContent>
         </Card>
         <Card>

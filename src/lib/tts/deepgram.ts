@@ -48,16 +48,32 @@ function toVoiceRecord(seed: DeepgramVoiceSeed, flagship: boolean): VoiceRecord 
   };
 }
 
-/** inline IPA pronunciation override: `Take \{"word":"dupilumab","pronounce":"..."\} twice daily.` */
+/**
+ * inline IPA pronunciation override: `Take \{"word":"dupilumab","pronounce":"..."\} twice daily.`
+ *
+ * One-pass replacement: sequential replaceAll would corrupt earlier inserts
+ * when an override's JSON happens to contain a later word. We insert
+ * sentinel tokens per word first, then substitute tokens in a single pass.
+ */
 export function injectPronunciations(
   text: string,
   pronunciations?: Array<{ word: string; pronounce: string }>,
 ): string {
   if (!pronunciations?.length) return text;
+
+  const SENTINEL = "\u0001LV\u0002";
   let out = text;
-  for (const { word, pronounce } of pronunciations) {
-    const override = `\\{${JSON.stringify({ word, pronounce }).slice(1, -1)}\\}`;
-    out = out.replaceAll(word, override);
+  const replacements = new Map<string, string>();
+
+  pronunciations.forEach(({ word, pronounce }, i) => {
+    if (!word) return;
+    const token = `${SENTINEL}${i}${SENTINEL}`;
+    out = out.replaceAll(word, token);
+    replacements.set(token, `\\{${JSON.stringify({ word, pronounce }).slice(1, -1)}\\}`);
+  });
+
+  for (const [token, override] of replacements) {
+    out = out.replaceAll(token, override);
   }
   return out;
 }
@@ -140,6 +156,7 @@ export class DeepgramProvider implements TtsProvider {
       const queue: Buffer[] = [];
       let flushResolve: (() => void) | null = null;
       let flushed = false;
+      let streamError: Error | null = null;
 
       connection.on("message", (message) => {
         if (typeof message === "string") {
@@ -150,7 +167,9 @@ export class DeepgramProvider implements TtsProvider {
         }
       });
       connection.on("error", (err) => {
-        console.error("[deepgram] stream error", err);
+        // must terminate the drain loop, otherwise `while (!flushed)` hangs forever
+        streamError = err instanceof Error ? err : new Error(String(err));
+        flushed = true;
         flushResolve?.();
       });
 
@@ -164,6 +183,7 @@ export class DeepgramProvider implements TtsProvider {
       while (!flushed) {
         await awaitFlush();
       }
+      if (streamError) throw streamError;
       while (queue.length > 0) {
         yield queue.shift()!;
       }

@@ -14,9 +14,14 @@ export default function SignupPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [referral, setReferral] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("ref") ?? "";
+  });
   const [isPending, startTransition] = useTransition();
 
   function onSubmit(formData: FormData) {
+    if (referral.trim()) formData.set("referral", referral.trim());
     startTransition(async () => {
       const state: AuthActionState = await signUpWithEmail({}, formData);
       if (state.error) {
@@ -57,6 +62,21 @@ export default function SignupPage() {
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <Input id="password" name="password" type="password" minLength={8} required autoComplete="new-password" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="referral">Referral code (optional)</Label>
+                <Input
+                  id="referral"
+                  name="referral"
+                  value={referral}
+                  onChange={(e) => setReferral(e.target.value)}
+                  placeholder="e.g. alex-8f2k"
+                  autoCapitalize="none"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  You and your friend each earn 2,500 credits when it&apos;s claimed.
+                </p>
               </div>
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {message ? <p className="text-sm text-emerald-600">{message}</p> : null}

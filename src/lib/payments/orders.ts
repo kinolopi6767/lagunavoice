@@ -66,22 +66,36 @@ export function hasWebhookProcessed(webhookId: string): boolean {
   return processedWebhooks.has(webhookId);
 }
 
-/** credit the ledger + mark paid. Idempotent per order. */
+/**
+ * credit the ledger + mark paid. Idempotent per order.
+ * Dedupe is recorded only AFTER the ledger credit succeeds, so a failed
+ * credit leaves the webhook unprocessed and the order unmarked (retry-safe).
+ */
 export async function confirmOrderPaid(orderId: string, opts?: { webhookId?: string }): Promise<CreditOrder | null> {
   const order = orders.get(orderId);
   if (!order) return null;
-  if (order.status === "paid") return order;
-  if (opts?.webhookId) {
-    if (processedWebhooks.has(opts.webhookId)) return order;
-    processedWebhooks.add(opts.webhookId);
-  }
+  if (order.status === "paid" || (opts?.webhookId && processedWebhooks.has(opts.webhookId))) return order;
 
   const balance = await credit(order.userId, order.credits, `pack: ${order.packSlug} (${order.credits.toLocaleString()} credits)`);
   void balance;
+
   order.status = "paid";
   order.paidAt = Date.now();
-  if (opts?.webhookId) order.webhookId = opts.webhookId;
+  if (opts?.webhookId) {
+    order.webhookId = opts.webhookId;
+    processedWebhooks.add(opts.webhookId);
+  }
   return order;
+}
+
+/**
+ * Reject webhook confirmations whose paid amount doesn't match the pack.
+ * Prevents underpayment credits if the payment gateway data is tampered/mismatched.
+ */
+export function assertAmountMatchesOrder(order: CreditOrder, paidAmount: number, currency: string): void {
+  if (currency !== order.currency || paidAmount < order.amount) {
+    throw new Error(`amount mismatch for order ${order.id}: expected ${order.currency} ${order.amount}, got ${currency} ${paidAmount}`);
+  }
 }
 
 /** admin manual confirmation (WhatsApp/UPI flow) */

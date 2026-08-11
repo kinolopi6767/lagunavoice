@@ -5,6 +5,8 @@ import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
+import { splitText } from "@/lib/tts/text";
 import {
   BillingUnavailableError,
   InsufficientCreditsError,
@@ -41,11 +43,6 @@ const GenerateSchema = z.object({
   rate: z.number().min(0.5).max(2).optional(),
 });
 
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  return xff?.split(",")[0]?.trim() || request.headers.get("cf-connecting-ip") || "unknown";
-}
-
 export async function POST(request: Request) {
   const ip = clientIp(request);
 
@@ -72,9 +69,17 @@ export async function POST(request: Request) {
         { status: 403 },
       );
     }
-    checkGenerationVelocity(`user:${sessionUserId}`, sessionUserId);
-  } else {
-    checkGenerationVelocity(`ip:${ip}`);
+    if (checkGenerationVelocity(`user:${sessionUserId}`, sessionUserId)) {
+      return NextResponse.json(
+        { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+        { status: 429 },
+      );
+    }
+  } else if (checkGenerationVelocity(`ip:${ip}`)) {
+    return NextResponse.json(
+      { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+      { status: 429 },
+    );
   }
 
   // 1. Moderation (skip when not configured) — 3 strikes → temp ban
@@ -115,16 +120,17 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3a. Free voices — per-IP daily caps, no credits
+  // 3a. Free voices — daily caps (per user when signed in, per IP as guest), no credits
   if (voice.tier === "free") {
-    const cap = consumeFreeChars(`ip:${ip}`, charCount);
+    const freeKey = sessionUserId ? `user:${sessionUserId}` : `ip:${ip}`;
+    const cap = consumeFreeChars(freeKey, charCount, { guest: !sessionUserId });
     if (!cap.allowed) {
       return NextResponse.json(
         {
           error:
             cap.reason === "daily_char_limit"
               ? "Daily free-character limit reached. Register for more."
-              : "Daily generation limit reached.",
+              : "Daily free-generation limit reached. Register for more.",
           code: "daily_limit_exceeded",
         },
         { status: 429 },
@@ -134,7 +140,7 @@ export async function POST(request: Request) {
     try {
       const provider = getProvider(voice.provider);
       const result = await provider.synthesize({ text, voice, style, pitch, rate });
-      await recordProviderUsage(voice.provider, charCount, 0, { tier: voice.tier === "free" ? "premium" : undefined, errored: false });
+      await recordProviderUsage(voice.provider, charCount, 0, { errored: false });
       return NextResponse.json({
         audioBase64: result.audio.toString("base64"),
         mimeType: result.mimeType,
@@ -177,16 +183,31 @@ export async function POST(request: Request) {
       description: `voice: ${voice.name} (${voice.provider}, ${voice.tier})`,
     });
 
-    const result = await provider.synthesize({ text, voice, style, pitch, rate });
+    // providers cap chars/request (typecast 2,000) — chunk and stitch like long-form
+    const chunks = splitText(text, provider.maxCharsPerRequest);
+    if (chunks.length === 0) {
+      return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
+    }
+    const parts: Buffer[] = [];
+    let durationMs = 0;
+    let mimeType: "audio/mpeg" | "audio/wav" = "audio/mpeg";
+    for (const chunk of chunks) {
+      const part = await provider.synthesize({ text: chunk, voice, style, pitch, rate });
+      parts.push(part.audio);
+      durationMs += part.durationMs;
+      mimeType = part.mimeType;
+    }
+    const audio = parts.length > 1 ? Buffer.concat(parts) : parts[0];
     await recordProviderUsage(voice.provider, charCount, 0, { tier: voice.tier === "flagship" ? "flagship" : "premium" });
 
     return NextResponse.json({
-      audioBase64: result.audio.toString("base64"),
-      mimeType: result.mimeType,
-      durationMs: result.durationMs,
+      audioBase64: audio.toString("base64"),
+      mimeType,
+      durationMs,
       charCount,
       tier: voice.tier,
       creditsCharged: debited,
+      chunked: chunks.length > 1,
     });
   } catch (err) {
     // refund anything we debited when synthesis failed

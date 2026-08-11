@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { CreditsChip } from "@/components/app/credits-chip";
 
 const NAV_LINKS = [
   { href: "/studio", label: "Studio" },
@@ -8,6 +9,7 @@ const NAV_LINKS = [
   { href: "/api-keys", label: "API keys" },
   { href: "/developers", label: "Developers" },
   { href: "/referrals", label: "Referrals" },
+  { href: "/billing", label: "Credits" },
 ];
 
 /**
@@ -34,6 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
 
             <div className="flex shrink-0 items-center gap-2">
+              <CreditsChip />
               <Button variant="outline" size="sm" asChild>
                 <Link href="/login">Sign in</Link>
               </Button>

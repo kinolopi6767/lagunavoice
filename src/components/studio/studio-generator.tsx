@@ -78,7 +78,12 @@ export function StudioGenerator() {
     <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
       <Card className="min-w-0">
         <CardContent>
-          <VoicePicker value={voiceId} onSelect={setVoiceId} />
+          <VoicePicker
+            value={voiceId}
+            onSelect={setVoiceId}
+            tier="all"
+            hint="Free voices use no credits. Premium (1 cr/char) and flagship (2 cr/char) debit your balance — refunded automatically if generation fails."
+          />
         </CardContent>
       </Card>
 

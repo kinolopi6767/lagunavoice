@@ -55,6 +55,18 @@ export function ReferralsPanel() {
     }
   }
 
+  async function copyShareLink() {
+    if (!summary) return;
+    const url = `${window.location.origin}/signup?ref=${encodeURIComponent(summary.code)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      setMessage(`Share link: ${url}`);
+    }
+  }
+
   async function claim() {
     setError(null);
     setMessage(null);
@@ -72,7 +84,7 @@ export function ReferralsPanel() {
       setMessage("This code was already claimed for your account.");
     } else {
       setMessage(
-        `Referral bonus of ${(d?.bonusCredits ?? 2_500).toLocaleString()} credits added to your balance.`,
+        "Code accepted — the friend who invited you earned 2,500 credits. Your signup bonus is already in your balance.",
       );
     }
     setCode("");
@@ -161,6 +173,9 @@ export function ReferralsPanel() {
               </code>
               <Button onClick={copyCode} disabled={copied}>
                 {copied ? "Copied!" : "Copy code"}
+              </Button>
+              <Button variant="outline" onClick={copyShareLink} disabled={copied}>
+                {copied ? "Copied!" : "Copy share link"}
               </Button>
             </CardContent>
           </Card>

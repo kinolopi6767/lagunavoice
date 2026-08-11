@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { DeepgramClient } from "@deepgram/sdk";
 import ffmpegStatic from "ffmpeg-static";
 import { getProvider } from "@/lib/tts/registry";
+import { splitText } from "@/lib/tts/text";
 import { buildSrt, sentenceFallbackSrt } from "@/lib/srt";
 import type { VoiceRecord, WordTimestamp } from "@/lib/tts/types";
 
@@ -33,6 +34,8 @@ export interface LongFormChunk {
 
 export interface LongFormJob {
   id: string;
+  /** owning user id (undefined = guest job) — poll endpoint enforces ownership */
+  userId?: string;
   status: "queued" | "processing" | "completed" | "failed";
   total: number;
   done: number;
@@ -48,31 +51,13 @@ export interface LongFormJob {
 const jobs = new Map<string, LongFormJob>();
 const JOB_TTL_MS = 30 * 60 * 1_000;
 
-/** chunk text at sentence boundaries, packing up to maxChars */
+/**
+ * chunk text at sentence boundaries, packing up to maxChars.
+ * A single paragraph/sentence longer than maxChars is hard-split by
+ * `splitText`, so oversized chunks can never reach the provider.
+ */
 export function chunkText(text: string, maxChars = 1_900): LongFormChunk[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return [];
-
-  const boundaryRe = /(?<=[.!?;:])\s+|\s+(?=[,])|,\s+(?=and\s|but\s|or\s)/g;
-  const pieces: string[] = [];
-  let last = 0;
-  for (const match of normalized.matchAll(boundaryRe)) {
-    pieces.push(normalized.slice(last, match.index! + match[0].length));
-    last = match.index! + match[0].length;
-  }
-  pieces.push(normalized.slice(last));
-
-  const chunks: LongFormChunk[] = [];
-  let buffer = "";
-  for (const piece of pieces) {
-    if (buffer.length > 0 && buffer.length + piece.length > maxChars) {
-      chunks.push({ text: buffer.trim() });
-      buffer = piece;
-    } else {
-      buffer += piece;
-    }
-  }
-  if (buffer.trim()) chunks.push({ text: buffer.trim() });
+  const chunks: LongFormChunk[] = splitText(text, maxChars).map((t) => ({ text: t }));
 
   // attach prev/next context for prosody continuity (Typecast SmartPrompt)
   return chunks.map((c, i) => ({
@@ -151,14 +136,18 @@ export function startLongFormJob(opts: {
   pitch?: number;
   rate?: number;
   tag?: string;
+  userId?: string;
   onDone?: (failed: boolean) => void | Promise<void>;
 }): LongFormJob {
-  const { id, text, voice, style, pitch, rate, tag, onDone } = opts;
+  const { id, text, voice, style, pitch, rate, tag, userId, onDone } = opts;
+  const existing = jobs.get(id);
+  if (existing) return existing; // never overwrite a running job (id collision guard)
   const provider = getProvider(voice.provider);
   const chunks = chunkText(text, Math.min(provider.maxCharsPerRequest - 100, 1_900));
 
   const job: LongFormJob = {
     id,
+    userId,
     status: "processing",
     total: chunks.length,
     done: 0,

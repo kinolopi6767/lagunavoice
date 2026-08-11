@@ -5,6 +5,8 @@ import { getVoiceById } from "@/lib/tts/catalog";
 import { moderateText } from "@/lib/security/moderation";
 import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
+import { checkGenerationVelocity, isBanned, recordModerationStrike } from "@/lib/abuse/rules";
 import { recordProviderUsage } from "@/lib/costs/store";
 import {
   InsufficientCreditsError,
@@ -47,11 +49,6 @@ const StreamSchema = z.object({
     .optional(),
 });
 
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  return xff?.split(",")[0]?.trim() || request.headers.get("cf-connecting-ip") || "unknown";
-}
-
 export async function POST(request: Request) {
   const ip = clientIp(request);
 
@@ -65,8 +62,32 @@ export async function POST(request: Request) {
   const { text, voiceId, rate, pronunciations } = parsed.data;
   const charCount = Array.from(text).length;
 
+  // ban check + velocity throttle (same guards as studio/generate)
+  const session = await resolveSession();
+  if (session.userId) {
+    const ban = isBanned(session.userId);
+    if (ban) {
+      return NextResponse.json(
+        { error: "Account temporarily restricted. Contact support.", code: "account_restricted" },
+        { status: 403 },
+      );
+    }
+    if (checkGenerationVelocity(`user:${session.userId}`, session.userId)) {
+      return NextResponse.json(
+        { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+        { status: 429 },
+      );
+    }
+  } else if (checkGenerationVelocity(`ip:${ip}`)) {
+    return NextResponse.json(
+      { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
+
   const moderation = await moderateText(text);
   if (moderation.verdict === "block") {
+    if (session.userId) recordModerationStrike(session.userId);
     return NextResponse.json({ error: "This text can't be used.", code: "content_policy" }, { status: 400 });
   }
 
@@ -98,11 +119,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // authenticate → user id (real session, or sandbox cookie without Supabase);
-  // guests get capped free previews
-  const session = await resolveSession();
-  const userId = session.userId ?? (session.supabaseConfigured ? "" : "guest");
-  const isGuest = userId === "guest";
+  // guests = no user id at all (signed-out with Supabase, or no sandbox cookie)
+  const isGuest = !session.userId;
+  const userId = session.userId;
 
   // guest rate limit applies to guests only (signed-in users bill on credits)
   if (isGuest && !consumeGuestStream(ip)) {
@@ -118,7 +137,7 @@ export async function POST(request: Request) {
   const credits = charCount * 2;
   if (!isGuest) {
     try {
-      await debitCredits({ userId, amount: credits, generationId, description: `stream: ${voice.name}` });
+      await debitCredits({ userId: userId!, amount: credits, generationId, description: `stream: ${voice.name}` });
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {
         return NextResponse.json(
@@ -143,7 +162,7 @@ export async function POST(request: Request) {
           voice,
           rate,
           pronunciations,
-          tag: `${userId}:stream:${generationId}`,
+          tag: `${userId ?? "guest"}:stream:${generationId}`,
         })) {
           controller.enqueue(new Uint8Array(chunk));
         }
@@ -153,7 +172,7 @@ export async function POST(request: Request) {
         console.error("[stream] deepgram failed", err);
         if (!isGuest) {
           try {
-            await refundCredits({ userId, amount: credits, generationId, description: "refunded failed stream" });
+            await refundCredits({ userId: userId!, amount: credits, generationId, description: "refunded failed stream" });
           } catch (refundErr) {
             console.error("[stream] refund failed (manual action needed)", refundErr);
           }
@@ -161,6 +180,17 @@ export async function POST(request: Request) {
         await recordProviderUsage(voice.provider, 0, 0, { tier: "flagship", errored: true });
         controller.error(err);
       }
+    },
+    // client aborted mid-stream: they never received the full audio, refund
+    async cancel() {
+      if (!isGuest) {
+        try {
+          await refundCredits({ userId: userId!, amount: credits, generationId, description: "refunded aborted stream" });
+        } catch (err) {
+          console.error("[stream] abort refund failed (manual action needed)", err);
+        }
+      }
+      await recordProviderUsage(voice.provider, 0, 0, { tier: "flagship", errored: true });
     },
   });
 

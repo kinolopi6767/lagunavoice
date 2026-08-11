@@ -10,9 +10,10 @@ import type { VoiceRecord } from "@/lib/tts/types";
 
 /**
  * Searchable voice picker used by the Studio (quick + long-form) and the
- * test playground. Loads the free tier by default; shows a skeleton while
- * loading, an empty state when nothing matches, and lets you audition a
- * voice with the play button before committing.
+ * test playground. Loads the free tier by default; with `tier="all"` it adds
+ * Free/Premium/Flagship filter tabs. Shows a skeleton while loading, an
+ * empty state when nothing matches, and lets you audition a voice with the
+ * play button before committing.
  */
 export function VoicePicker({
   value,
@@ -36,16 +37,21 @@ export function VoicePicker({
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [activeTier, setActiveTier] = useState<"free" | "premium" | "flagship">("free");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const withTabs = tier === "all";
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/voices?limit=${limit}&tier=${tier}`)
+    fetch(`/api/voices?limit=${withTabs ? 200 : limit}&tier=${withTabs ? "all" : tier}`)
       .then((r) => r.json() as Promise<{ voices: VoiceRecord[] }>)
       .then((d) => {
         if (cancelled) return;
         setVoices(d.voices);
-        if (d.voices.length > 0 && !value) onSelect(d.voices[0].id);
+        // never auto-select a paid voice for a guest
+        const fallback = d.voices.find((v) => v.tier === "free") ?? d.voices[0];
+        if (fallback && !value) onSelect(fallback.id);
       })
       .catch(() => {
         if (!cancelled) setError("Could not load the voice list.");
@@ -65,7 +71,11 @@ export function VoicePicker({
     };
   }, []);
 
-  const filtered = voices.filter((v) => v.name.toLowerCase().includes(query.toLowerCase()));
+  const filtered = voices.filter(
+    (v) =>
+      (withTabs ? v.tier === activeTier : true) &&
+      v.name.toLowerCase().includes(query.toLowerCase()),
+  );
 
   function togglePreview(v: VoiceRecord) {
     if (playingId === v.id) {
@@ -102,6 +112,35 @@ export function VoicePicker({
         onChange={(e) => setQuery(e.target.value)}
         aria-label={`Search ${label.toLowerCase()}s`}
       />
+
+      {withTabs ? (
+        <div className="flex gap-1 rounded-lg border border-border bg-muted/40 p-1">
+          {(["free", "premium", "flagship"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => {
+                setActiveTier(t);
+                // auto-select the first voice of the new tier if nothing selected there
+                if (!filtered.some((v) => v.id === value)) {
+                  const first = voices.find((v) => v.tier === t);
+                  if (first) onSelect(first.id);
+                }
+              }}
+              className={cn(
+                "flex-1 rounded-md px-2 py-1.5 text-xs font-medium capitalize transition-colors",
+                activeTier === t ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={activeTier === t}
+            >
+              {t}
+              <span className="ml-1 text-[10px] text-muted-foreground">
+                {t === "free" ? "0 cr/char" : t === "premium" ? "1 cr/char" : "2 cr/char"}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {loading ? (

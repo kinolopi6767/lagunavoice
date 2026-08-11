@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveSession } from "@/lib/sandbox/session";
-import { getPack, getPlan } from "@/lib/pricing/packs";
+import { getPack, getPlan, priceInr } from "@/lib/pricing/packs";
 import { createOrder, setOrderRef } from "@/lib/payments/orders";
 import { createPaymentLink, RazorpayNotConfiguredError } from "@/lib/payments/razorpay";
 
@@ -48,17 +48,19 @@ export async function POST(request: Request) {
     ? (product as { credits: number }).credits
     : (product as { premiumCredits: number }).premiumCredits;
 
+  const amountInrPaise = priceInr(product.priceUsd);
+
   const order = createOrder({
     userId,
     packSlug: product.slug,
-    amount: Math.round(product.priceUsd * 100),
+    amount: amountInrPaise,
     credits,
     provider: "razorpay",
   });
 
   try {
     const link = await createPaymentLink({
-      amountPaise: Math.round(product.priceUsd * 100),
+      amountPaise: amountInrPaise,
       description: `LugunaVoice ${product.name} — ${credits.toLocaleString()} credits`,
       orderId: order.id,
       customerEmail: email,

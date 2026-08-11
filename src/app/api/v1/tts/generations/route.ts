@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyApiKey, hasScope, consumeIdempotencyKey, rateLimitCheck } from "@/lib/keys/store";
+import { verifyApiKey, hasScope, getIdempotencyResult, setIdempotencyResult, rateLimitCheck } from "@/lib/keys/store";
 import { getVoiceById } from "@/lib/tts/catalog";
 import { startGeneration } from "@/lib/generations/store";
 import { moderateText } from "@/lib/security/moderation";
 import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
-import { isBanned } from "@/lib/abuse/rules";
+import { checkGenerationVelocity, isBanned } from "@/lib/abuse/rules";
 import { InsufficientCreditsError, debitCredits, refundCredits } from "@/lib/credits/ledger";
 import { recordProviderUsage } from "@/lib/costs/store";
 
@@ -47,6 +47,12 @@ export async function POST(request: Request) {
   if (isBanned(record.userId)) {
     return NextResponse.json({ error: "Account restricted.", code: "account_restricted" }, { status: 403 });
   }
+  if (checkGenerationVelocity(`user:${record.userId}`, record.userId)) {
+    return NextResponse.json(
+      { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
 
   // 2. Rate limit
   const limit = rateLimitCheck(record);
@@ -57,14 +63,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Idempotency
+  // 3. Idempotency — replay returns the original generation (never recharges)
   const idempotencyKey = request.headers.get("idempotency-key");
   if (idempotencyKey) {
-    const firstUse = consumeIdempotencyKey(`k:${record.id}:${idempotencyKey}`);
-    if (!firstUse) {
+    const previous = getIdempotencyResult(`k:${record.id}:${idempotencyKey}`);
+    if (previous) {
       return NextResponse.json(
-        { error: "This Idempotency-Key was already used.", code: "idempotency_conflict" },
-        { status: 409 },
+        { id: previous, status: "processing", replay: true },
+        { status: 202 },
       );
     }
   }
@@ -125,7 +131,12 @@ export async function POST(request: Request) {
     }
   }
 
-  // 8. Start generation (refund on provider failure)
+  // 8. Start generation (refund on provider failure).
+  //    Record the idempotency result only now — after the debit succeeded —
+  //    so a failed request can be safely retried with the same key.
+  if (idempotencyKey) {
+    setIdempotencyResult(`k:${record.id}:${idempotencyKey}`, generationId);
+  }
   startGeneration({
     id: generationId,
     userId: record.userId,

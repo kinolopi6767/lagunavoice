@@ -15,7 +15,7 @@ const CODE_BLOCK = `curl https://api.lugunavoice.com/v1/tts/generations \\
   }'
 # → 202 { "id": "gen_...", "status": "processing" }`;
 
-const POLL_BLOCK = `curl https://api.lugunavoice.com/v1/tts/generations/gen_... \\
+const POLL_BLOCK = `curl https://api.lugunavoice.com/v1/generations/gen_... \\
   -H "Authorization: Bearer $LUGUNA_API_KEY"
 # → { "id": "gen_...", "status": "completed",
 #     "audioBase64": "...", "mimeType": "audio/mpeg", "durationMs": 2140 }`;
@@ -48,7 +48,7 @@ const ENDPOINTS = [
   },
   {
     method: "GET",
-    path: "/v1/tts/generations/:id",
+    path: "/v1/generations/:id",
     desc: "Poll a generation: processing → completed (audioBase64 + durationMs) | failed.",
   },
   {
@@ -66,7 +66,6 @@ const ENDPOINTS = [
 const CODES = [
   ["401", "invalid_api_key"],
   ["402", "insufficient_credits"],
-  ["409", "idempotency_conflict"],
   ["429", "rate_limited"],
   ["503", "voice_engine_unavailable"],
 ];
@@ -107,9 +106,9 @@ export function DevelopersDocs() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">2 · Poll for the result</CardTitle>
               <CardDescription>
-                <code>GET /v1/tts/generations/:id</code> — poll every 1 second, up to 40
-                seconds. On <code>503</code> or a network failure, retry the same request —
-                the <code>Idempotency-Key</code> makes retries free.
+                <code>GET /v1/generations/:id</code> — poll every 1 second, up to 40
+                seconds. A retry with the same <code>Idempotency-Key</code> returns the
+                original generation (never double-charges).
               </CardDescription>
             </CardHeader>
             <CardContent>

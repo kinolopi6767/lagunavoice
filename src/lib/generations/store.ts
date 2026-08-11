@@ -1,5 +1,6 @@
 import { getProvider } from "@/lib/tts/registry";
 import { moderateText } from "@/lib/security/moderation";
+import { splitText } from "@/lib/tts/text";
 import type { VoiceRecord } from "@/lib/tts/types";
 
 /**
@@ -88,17 +89,19 @@ export function startGeneration(opts: {
       const chunks = charCount <= maxChars ? [text] : splitText(text, maxChars);
       const audios: Buffer[] = [];
       let durationMs = 0;
+      let mimeType: "audio/mpeg" | "audio/wav" = "audio/mpeg";
 
       for (const chunk of chunks) {
         const result = await provider.synthesize({ text: chunk, voice, style, pitch, rate, tag });
         audios.push(result.audio);
         durationMs += result.durationMs ?? 0;
+        mimeType = result.mimeType;
       }
 
       const audio = audios.length === 1 ? audios[0] : Buffer.concat(audios);
 
       gen.audioBase64 = audio.toString("base64");
-      gen.mimeType = "audio/mpeg";
+      gen.mimeType = mimeType;
       gen.durationMs = durationMs;
       gen.status = "completed";
     } catch (err) {
@@ -118,19 +121,6 @@ export function startGeneration(opts: {
   })();
 
   return gen;
-}
-
-function splitText(text: string, maxChars: number): string[] {
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > maxChars) {
-    let cut = rest.lastIndexOf(" ", maxChars);
-    if (cut < maxChars * 0.5) cut = maxChars;
-    chunks.push(rest.slice(0, cut).trim());
-    rest = rest.slice(cut).trim();
-  }
-  if (rest) chunks.push(rest);
-  return chunks;
 }
 
 export { moderateText };

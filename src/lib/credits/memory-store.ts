@@ -42,6 +42,26 @@ export function memoryGetBalance(userId: string): number {
   return balances.get(userId) ?? 0;
 }
 
+/** ids whose signup bonus was already granted — survives a spent-to-zero balance */
+const signupGranted = new Set<string>();
+/** generationIds already refunded — prevents double refunds on retried callbacks */
+const refundedGenerations = new Set<string>();
+
+export function memoryIsSignupGranted(userId: string): boolean {
+  return signupGranted.has(userId);
+}
+
+export function memoryMarkSignupGranted(userId: string): void {
+  signupGranted.add(userId);
+}
+
+export function memoryMarkRefunded(userId: string, generationId: string): boolean {
+  const key = `${userId}:${generationId}`;
+  if (refundedGenerations.has(key)) return false;
+  refundedGenerations.add(key);
+  return true;
+}
+
 export function memoryApply(userId: string, amount: number, entry: Omit<LedgerEntry, "userId" | "amount" | "balanceAfter" | "createdAt" | "id">): number {
   const balance = memoryGetBalance(userId);
   const next = balance + amount;

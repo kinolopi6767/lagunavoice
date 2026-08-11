@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { registerReferralCode } from "@/lib/referrals/store";
+import { claimReferral, registerReferralCode } from "@/lib/referrals/store";
 
 export interface AuthActionState {
   error?: string;
@@ -74,7 +74,7 @@ export async function signUpWithEmail(
   // wire the signup bonus + personal referral code (safe in memory/DB modes)
   if (data.user) {
     const userId = data.user.id;
-    const { grantSignupBonus } = await import("@/lib/credits/ledger");
+    const { grantSignupBonus, grantReferralBonus } = await import("@/lib/credits/ledger");
     try {
       await grantSignupBonus(userId);
     } catch (err) {
@@ -82,6 +82,19 @@ export async function signUpWithEmail(
     }
     const slug = email.split("@")[0]?.replace(/[^a-z0-9]+/gi, "").slice(0, 12) || "user";
     registerReferralCode(`${slug}-${userId.slice(0, 4)}`, userId);
+
+    // optional referral claim from the signup form (?ref= or the input)
+    const ref = String(formData.get("referral") ?? "").trim();
+    if (ref) {
+      const claim = claimReferral(ref, userId);
+      if (claim.status === "claimed") {
+        try {
+          await grantReferralBonus(userId, claim.referrerId);
+        } catch (err) {
+          console.error("[auth] referral bonus failed", err);
+        }
+      }
+    }
   }
 
   return { ok: true };

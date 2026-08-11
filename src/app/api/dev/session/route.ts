@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { clientIp } from "@/lib/http/client-ip";
 import {
   createSandboxUser,
   sandboxCookieName,
+  signSandboxUserId,
   supabaseConfigured,
+  verifySandboxUserId,
 } from "@/lib/sandbox/session";
 
 /**
@@ -11,16 +14,39 @@ import {
  *
  * GET  /api/dev/session — status: is Supabase configured, sandbox active?
  * POST /api/dev/session { action: "enter", name? } — mint a sandbox user
- *      (2,000 test credits + a referral code) and set the sandbox cookie.
+ *      (2,000 test credits + a referral code) and set the SIGNED sandbox
+ *      cookie (HMAC — forging another user's id is impossible).
  * POST /api/dev/session { action: "exit" } — clear the sandbox cookie.
+ *
+ * Minting is capped at 3 users/day per IP (sandbox referral codes must not
+ * farm the referral bonus).
  *
  * Temporary local-testing facility: only meaningful while Supabase auth is
  * NOT configured (the cookie is ignored once real auth exists).
  */
+
+const MAX_MINTS_PER_IP_PER_DAY = 3;
+const mintCounts = new Map<string, number>();
+
+function consumeMint(ip: string): boolean {
+  const key = `${ip}:${new Date().toISOString().slice(0, 10)}`;
+  const used = mintCounts.get(key) ?? 0;
+  if (used >= MAX_MINTS_PER_IP_PER_DAY) return false;
+  mintCounts.set(key, used + 1);
+  return true;
+}
+
 export async function GET(request: Request) {
   const configured = supabaseConfigured();
   const enter = new URL(request.url).searchParams.get("action");
   if (!configured && enter === "enter") {
+    const ip = clientIp(request);
+    if (!consumeMint(ip)) {
+      return NextResponse.json(
+        { error: "Sandbox user mint limit reached for today.", code: "rate_limited" },
+        { status: 429 },
+      );
+    }
     const name = new URL(request.url).searchParams.get("name") ?? "tester";
     const user = await createSandboxUser(name);
     const res = NextResponse.json({
@@ -28,7 +54,7 @@ export async function GET(request: Request) {
       referralCode: user.referralCode, credits: user.credits,
       hint: "Sandbox session entered via ?action=enter (link-based).",
     });
-    res.cookies.set(sandboxCookieName(), user.userId, {
+    res.cookies.set(sandboxCookieName(), signSandboxUserId(user.userId), {
       httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
     });
     return res;
@@ -37,7 +63,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ supabaseConfigured: true, sandbox: false });
   }
   const cookieStore = await cookies();
-  const userId = cookieStore.get(sandboxCookieName())?.value;
+  const raw = cookieStore.get(sandboxCookieName())?.value;
+  const userId = raw ? verifySandboxUserId(raw) : undefined;
   return NextResponse.json({ supabaseConfigured: false, sandbox: Boolean(userId), userId });
 }
 
@@ -62,6 +89,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
   }
 
+  const ip = clientIp(request);
+  if (!consumeMint(ip)) {
+    return NextResponse.json(
+      { error: "Sandbox user mint limit reached for today.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
+
   const name = typeof body?.name === "string" && body.name.trim() ? body.name.slice(0, 24) : undefined;
   const user = await createSandboxUser(name);
 
@@ -73,7 +108,7 @@ export async function POST(request: Request) {
     credits: user.credits,
     hint: "Sandbox mode: real auth is not configured, so this cookie acts as your signed-in session.",
   });
-  res.cookies.set(sandboxCookieName(), user.userId, {
+  res.cookies.set(sandboxCookieName(), signSandboxUserId(user.userId), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",

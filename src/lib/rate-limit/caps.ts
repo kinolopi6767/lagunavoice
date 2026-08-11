@@ -38,9 +38,12 @@ export interface CapResult {
   reason?: "daily_char_limit" | "daily_generation_limit";
 }
 
-/** consume chars for a free (Edge) generation */
-export function consumeFreeChars(key: string, chars: number): CapResult {
+/** consume chars for a free (Edge) generation; guests also use a generation slot */
+export function consumeFreeChars(key: string, chars: number, opts?: { guest?: boolean }): CapResult {
   const entry = getEntry(key);
+  if (opts?.guest && entry.generations >= GUEST_DAILY_GENERATIONS) {
+    return { allowed: false, remainingChars: EDGE_DAILY_CHARS - entry.chars, reason: "daily_generation_limit" };
+  }
   if (entry.chars + chars > EDGE_DAILY_CHARS) {
     return { allowed: false, remainingChars: EDGE_DAILY_CHARS - entry.chars, reason: "daily_char_limit" };
   }

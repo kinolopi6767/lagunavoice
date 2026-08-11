@@ -6,7 +6,9 @@ import { memoryAllUsers } from "@/lib/credits/memory-store";
 
 /**
  * POST /api/admin/grant — admin manual credit grant (admin route).
- * Body: { userId, amount } — userId may be a known memory user or an email.
+ * Body: { userId, amount } — userId is a known memory user id; an email only
+ * matches an exact in-memory user id (never a substring — "mario" must not
+ * grant "mario_the_bot").
  */
 const GrantSchema = z.object({
   userId: z.string().min(3),
@@ -26,10 +28,12 @@ export async function POST(request: Request) {
 
   const { userId, amount } = parsed.data;
 
-  // resolve email → known in-memory user id (DB mode resolves profiles later)
+  // resolve email → known in-memory user id (exact match only)
   let target = userId;
-  const byEmail = memoryAllUsers().find((u) => u.userId.includes(userId));
-  if (byEmail) target = byEmail.userId;
+  if (!userId.startsWith("sandbox_")) {
+    const byEmail = memoryAllUsers().find((u) => u.userId === userId);
+    if (byEmail) target = byEmail.userId;
+  }
 
   const balance = await credit(target, amount, `admin grant (${amount.toLocaleString()} credits)`);
 

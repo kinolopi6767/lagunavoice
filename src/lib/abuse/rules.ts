@@ -100,20 +100,32 @@ export function moderationStrikeCount(userId: string): number {
   return moderationStrikes.get(userId) ?? 0;
 }
 
-/** R2 — generation velocity: >10/min → flag + 24h temp ban */
-export function checkGenerationVelocity(key: string, userId?: string): void {
+/**
+ * R2 — generation velocity: >10/min → flag + throttle (429).
+ * Deliberately does NOT auto-ban: legitimate burst use is common, and bans
+ * are for humans (admin) or hard signals (R7/R8). Guests are throttled on IP,
+ * signed-in users on account — admin sees the flag either way.
+ */
+export function checkGenerationVelocity(key: string, userId?: string): boolean {
   const now = Date.now();
   const entry = velocity.get(key);
   if (!entry || now - entry.windowStart > VELOCITY_WINDOW_MS) {
     velocity.set(key, { windowStart: now, count: 1 });
-    return;
+    return false;
   }
   entry.count += 1;
   if (entry.count > VELOCITY_LIMIT) {
     velocity.delete(key);
-    if (userId) banUser(userId, "temporary", "Rate abuse: generation velocity exceeded", 24);
-    flag({ userId, ip: key.startsWith("ip:") ? key.slice(3) : undefined, rule: "R2", severity: "high", evidence: { count: entry.count } });
+    flag({
+      userId,
+      ip: key.startsWith("ip:") ? key.slice(3) : undefined,
+      rule: "R2",
+      severity: userId ? "medium" : "high",
+      evidence: { count: entry.count },
+    });
+    return true;
   }
+  return false;
 }
 
 /** R3 — same device fingerprint on >2 accounts → flag/block */

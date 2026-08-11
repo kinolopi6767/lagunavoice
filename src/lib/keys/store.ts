@@ -24,7 +24,8 @@ export interface ApiKey {
 }
 
 const keys = new Map<string, ApiKey>(); // keyHash → key
-const usedTokens = new Set<string>(); // idempotency keys (dedupe)
+/** idempotency results: key → generationId (replays return the original) */
+const idempotencyResults = new Map<string, string>();
 
 export function createApiKey(opts: {
   userId: string;
@@ -80,11 +81,17 @@ export function hasScope(record: ApiKey, scope: string): boolean {
   return record.scopes.includes(scope);
 }
 
-/** idempotency dedupe — returns true if this key was already used */
-export function consumeIdempotencyKey(idempotencyKey: string): boolean {
-  if (usedTokens.has(idempotencyKey)) return false;
-  usedTokens.add(idempotencyKey);
-  return true;
+/**
+ * Idempotency — a used key stores the ORIGINAL result (generationId).
+ * Replays return it instead of failing, so retries never double-charge.
+ * Registered only AFTER the debit succeeds (see v1 route).
+ */
+export function getIdempotencyResult(idempotencyKey: string): string | undefined {
+  return idempotencyResults.get(idempotencyKey);
+}
+
+export function setIdempotencyResult(idempotencyKey: string, generationId: string): void {
+  idempotencyResults.set(idempotencyKey, generationId);
 }
 
 /** token-bucket rate limit per key (rpm) — returns ms to wait (0 = allowed) */

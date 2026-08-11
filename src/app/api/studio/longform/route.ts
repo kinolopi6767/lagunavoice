@@ -5,8 +5,10 @@ import { moderateText } from "@/lib/security/moderation";
 import { consumeFreeChars } from "@/lib/rate-limit/caps";
 import { startLongFormJob } from "@/lib/tts/longform";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
 import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 import { recordProviderUsage } from "@/lib/costs/store";
+import { checkGenerationVelocity, isBanned } from "@/lib/abuse/rules";
 import {
   BillingUnavailableError,
   InsufficientCreditsError,
@@ -32,11 +34,6 @@ const LongFormSchema = z.object({
   rate: z.number().min(0.5).max(2).optional(),
 });
 
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  return xff?.split(",")[0]?.trim() || request.headers.get("cf-connecting-ip") || "unknown";
-}
-
 export async function POST(request: Request) {
   const ip = clientIp(request);
 
@@ -49,6 +46,28 @@ export async function POST(request: Request) {
 
   // session for owner-scoped voice resolution (real session, or sandbox cookie)
   const session = await resolveSession();
+
+  // ban check + velocity throttle (same guards as studio/generate)
+  if (session.userId) {
+    const ban = isBanned(session.userId);
+    if (ban) {
+      return NextResponse.json(
+        { error: "Account temporarily restricted. Contact support.", code: "account_restricted" },
+        { status: 403 },
+      );
+    }
+    if (checkGenerationVelocity(`user:${session.userId}`, session.userId)) {
+      return NextResponse.json(
+        { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+        { status: 429 },
+      );
+    }
+  } else if (checkGenerationVelocity(`ip:${ip}`)) {
+    return NextResponse.json(
+      { error: "Too many requests. Slow down and try again.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
 
   const { text, voiceId, style, pitch, rate } = parsed.data;
   const charCount = Array.from(text).length;
@@ -87,15 +106,22 @@ export async function POST(request: Request) {
 
   // ---------- free tier (Edge) ----------
   if (voice.tier === "free") {
-    const cap = consumeFreeChars(`ip:${ip}`, charCount);
+    const freeKey = session.userId ? `user:${session.userId}` : `ip:${ip}`;
+    const cap = consumeFreeChars(freeKey, charCount, { guest: !session.userId });
     if (!cap.allowed) {
       return NextResponse.json(
-        { error: "Daily free-character limit reached. Register for more.", code: "daily_limit_exceeded" },
+        {
+          error:
+            cap.reason === "daily_char_limit"
+              ? "Daily free-character limit reached. Register for more."
+              : "Daily free-generation limit reached. Register for more.",
+          code: "daily_limit_exceeded",
+        },
         { status: 429 },
       );
     }
     startLongFormJob({
-      id: jobId, text, voice, style, pitch, rate, tag: `guest:${ip}`,
+      id: jobId, text, voice, style, pitch, rate, tag: session.userId ?? `guest:${ip}`, userId: session.userId,
       onDone: async () => {
         await recordProviderUsage(voice.provider, charCount, 0);
       },
@@ -138,6 +164,7 @@ export async function POST(request: Request) {
     pitch,
     rate,
     tag: `${userId}:longform`,
+    userId,
     onDone: async (failed) => {
       await recordProviderUsage(voice.provider, charCount, 0, {
         tier: voice.tier === "flagship" ? "flagship" : "premium",

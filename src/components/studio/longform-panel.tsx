@@ -72,6 +72,13 @@ export function LongFormPanel() {
 
       pollRef.current = setInterval(async () => {
         const r = await fetch(`/api/studio/longform/${data.jobId}`);
+        if (!r.ok) {
+          // 404 = job expired/not found — stop polling instead of spinning forever
+          stopPolling();
+          setJob(null);
+          setError("The job expired before finishing. Try again with shorter text.");
+          return;
+        }
         const j = (await r.json()) as JobState;
         setJob(j);
 
@@ -131,9 +138,10 @@ export function LongFormPanel() {
             <VoicePicker
               value={voiceId}
               onSelect={setVoiceId}
+              tier="all"
               limit={60}
               label="Voice"
-              hint="Same library as quick generation."
+              hint="Same library as quick generation — premium bills 1 credit/char, flagship 2 credits/char."
             />
           </div>
 

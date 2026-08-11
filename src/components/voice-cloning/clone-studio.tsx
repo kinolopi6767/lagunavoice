@@ -49,7 +49,15 @@ export function CloneStudio() {
         setError("Sample must be under 25 MB.");
         return;
       }
-      const sampleBase64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      // chunked base64 — spreading a large Uint8Array into String.fromCharCode
+      // throws "Maximum call stack size exceeded" past ~64k bytes
+      const bytes = new Uint8Array(buffer);
+      const CHUNK = 0x8000;
+      const parts: string[] = [];
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+      }
+      const sampleBase64 = btoa(parts.join(""));
       setStatus("cloning");
 
       const res = await fetch("/api/voice-cloning", {
@@ -190,7 +198,7 @@ export function CloneStudio() {
             <div className="rounded-md border bg-muted/40 p-4">
               <p className="font-medium">{clonedVoice.name}</p>
               <p className="text-xs text-muted-foreground">
-                {clonedVoice.id} · Typecast ssfm-v30 · premium credits
+                {clonedVoice.id} · Typecast ssfm-v30 · 2,500 credits charged
               </p>
               <audio
                 controls
@@ -198,16 +206,16 @@ export function CloneStudio() {
                 className="mt-2 w-full"
               />
               <p className="mt-2 text-xs text-emerald-600">
-                Clone created. Find it in the voice library and Studio — premium credits
-                apply per character, like other premium voices.
+                Clone created. Find it in the voice library and Studio — it speaks like the
+                sample, and generated speech bills at premium rates.
               </p>
             </div>
           ) : (
             <div className="rounded-md border border-dashed p-8 text-center">
               <p className="font-medium">No clones yet</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Create your first one on the left. Cloning costs premium credits per
-                character of generated speech.
+                Create your first one on the left. Each clone costs 2,500 credits — refunded
+                automatically if cloning fails.
               </p>
             </div>
           )}

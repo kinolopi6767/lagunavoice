@@ -7,7 +7,7 @@ const PLANS = [
     price: "$0",
     period: "forever",
     description: "Try the studio",
-    features: ["2,000 signup credits", "Unlimited Edge TTS voices", "100K free chars/day", "10K chars per generation"],
+    features: ["2,000 signup credits", "Unlimited Edge TTS voices", "100K free chars/day", "5K chars per generation (10K via API)"],
     cta: "Start free",
     href: "/signup",
     highlighted: false,

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
  * Razorpay integration — Payment Links + webhook verification (HMAC-SHA256).
@@ -50,7 +50,7 @@ export async function createPaymentLink(opts: PaymentLinkOptions): Promise<Payme
       currency: "INR",
       description: opts.description.slice(0, 99),
       reference_id: opts.orderId,
-      callback_url: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/pricing`,
+      callback_url: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/billing`,
       callback_method: "get",
       notes: { order_id: opts.orderId },
       customer: opts.customerEmail ? { email: opts.customerEmail } : undefined,
@@ -79,7 +79,9 @@ export function verifyWebhookSignature(rawBody: string, signatureHeader: string 
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!secret || !signatureHeader) return false;
   const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-  return expected === signatureHeader;
+  const a = Buffer.from(signatureHeader);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** dedupe: Razorpay replays events — the webhook id must be unique per order */
@@ -88,7 +90,7 @@ export interface RazorpayEvent {
   id: string;
   payment?: { id?: string; status?: string };
   payload?: {
-    payment?: { entity?: { id?: string; status?: string } };
+    payment?: { entity?: { id?: string; status?: string; amount?: number } };
     payment_link?: { entity?: { id?: string; reference_id?: string; status?: string } };
   };
 }

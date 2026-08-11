@@ -6,7 +6,9 @@ import {
   memoryApply,
   memoryGetBalance,
   memoryGrantReferralBonus,
-  memoryGrantSignupBonus,
+  memoryIsSignupGranted,
+  memoryMarkRefunded,
+  memoryMarkSignupGranted,
   memoryLedgerHistory,
   type LedgerEntry,
 } from "@/lib/credits/memory-store";
@@ -134,7 +136,7 @@ export async function debitCredits(opts: {
   return result;
 }
 
-/** Refund credits for a failed generation. Always succeeds (adds back). */
+/** Refund credits for a failed generation. Idempotent per generationId. */
 export async function refundCredits(opts: {
   userId: string;
   amount: number;
@@ -144,6 +146,9 @@ export async function refundCredits(opts: {
   const { userId, amount, generationId, description } = opts;
 
   if (!dbConfigured()) {
+    if (!memoryMarkRefunded(userId, generationId)) {
+      return memoryGetBalance(userId); // already refunded — never double-refund
+    }
     return memoryApply(userId, amount, {
       type: "refund",
       generationId,
@@ -155,6 +160,19 @@ export async function refundCredits(opts: {
     "refundCredits",
     () =>
       db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select({ id: creditLedger.id })
+          .from(creditLedger)
+          .where(and(eq(creditLedger.userId, userId), eq(creditLedger.generationId, generationId), eq(creditLedger.type, "refund")))
+          .limit(1);
+        if (existing) {
+          const [row] = await tx
+            .select({ balance: profiles.creditsBalance })
+            .from(profiles)
+            .where(eq(profiles.id, userId));
+          return row?.balance ?? amount;
+        }
+
         const [updated] = await tx
           .update(profiles)
           .set({
@@ -175,12 +193,16 @@ export async function refundCredits(opts: {
 
         return updated?.balance ?? amount;
       }),
-    () =>
-      memoryApply(userId, amount, {
+    () => {
+      if (!memoryMarkRefunded(userId, generationId)) {
+        return memoryGetBalance(userId);
+      }
+      return memoryApply(userId, amount, {
         type: "refund",
         generationId,
         description: description ?? "refunded failed generation",
-      }),
+      });
+    },
   );
 }
 
@@ -217,12 +239,27 @@ export async function credit(userId: string, amount: number, description: string
   );
 }
 
-/** signup bonus — once per account */
+/** signup bonus — once per account, ever (flag survives a spent balance) */
 export async function grantSignupBonus(userId: string): Promise<number> {
-  if (!dbConfigured()) return memoryGrantSignupBonus(userId);
-  const balance = await getBalance(userId);
-  if (balance > 0) return balance;
-  return credit(userId, 2_000, "signup bonus");
+  if (!dbConfigured()) {
+    if (memoryIsSignupGranted(userId)) return memoryGetBalance(userId);
+    memoryMarkSignupGranted(userId);
+    return memoryApply(userId, SIGNUP_BONUS_CREDITS, { type: "signup_bonus", description: "signup bonus" });
+  }
+  const granted = await withFallback(
+    "grantSignupBonus",
+    async () => {
+      const [row] = await db
+        .select({ id: creditLedger.id })
+        .from(creditLedger)
+        .where(and(eq(creditLedger.userId, userId), eq(creditLedger.type, "signup_bonus")))
+        .limit(1);
+      return Boolean(row);
+    },
+    () => memoryIsSignupGranted(userId),
+  );
+  if (granted) return getBalance(userId);
+  return credit(userId, SIGNUP_BONUS_CREDITS, "signup bonus");
 }
 
 /** referral bonus for the referrer */

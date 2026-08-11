@@ -1,26 +1,37 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
 import { getOrder, listOrders, confirmManualOrder } from "@/lib/payments/orders";
 import { isAdminRequest } from "@/lib/ops/admin";
+import { resolveSession } from "@/lib/sandbox/session";
+import { getBalance, ledgerHistory } from "@/lib/credits/ledger";
 
 /**
- * GET /api/payments/orders — the user's purchase history.
+ * GET /api/payments/orders — the user's purchase history + balance + recent
+ * ledger (feeds the /billing page). Works with the real Supabase session OR
+ * the sandbox cookie (no env).
  */
 export async function GET() {
-  let userId: string;
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
-      return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
-    }
-    userId = data.user.id;
-  } catch {
+  const session = await resolveSession();
+  if (!session.userId) {
     return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({ orders: listOrders(userId) });
+  const [balance, recentLedger] = await Promise.all([
+    getBalance(session.userId),
+    ledgerHistory(session.userId, 12),
+  ]);
+
+  return NextResponse.json({
+    orders: listOrders(session.userId),
+    balance,
+    recentLedger: recentLedger.map((e) => ({
+      type: e.type,
+      amount: e.amount,
+      balanceAfter: e.balanceAfter,
+      description: e.description,
+      createdAt: e.createdAt,
+    })),
+  });
 }
 
 /**

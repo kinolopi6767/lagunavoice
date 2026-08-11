@@ -75,6 +75,19 @@ export const MONTHLY_PLANS: MonthlyPlan[] = [
 
 export const SIGNUP_BONUS_CREDITS = 2_000;
 export const REFERRAL_BONUS_CREDITS = 2_500;
+/** one voice-clone attempt (typecast wholesale ≈ $1–2; billed at pack rates) */
+export const CLONE_CREDIT_COST = 2_500;
+
+/**
+ * Razorpay settles in INR — prices are shown in USD but charged at this
+ * fixed USD→INR rate so the order amount always matches the payment link.
+ */
+export const USD_TO_INR = 83;
+
+/** price in INR minor units (paise) for Razorpay Payment Links */
+export function priceInr(priceUsd: number): number {
+  return Math.round(priceUsd * USD_TO_INR * 100);
+}
 
 export function getPack(slug: string): CreditPack | undefined {
   return CREDIT_PACKS.find((p) => p.slug === slug);

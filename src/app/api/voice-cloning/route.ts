@@ -8,7 +8,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import ffmpegStatic from "ffmpeg-static";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
 import { getProvider } from "@/lib/tts/registry";
+import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
+import { InsufficientCreditsError, debitCredits, refundCredits } from "@/lib/credits/ledger";
+import { CLONE_CREDIT_COST } from "@/lib/pricing/packs";
 import {
   cloneAttemptsRemaining,
   recordCloneAttempt,
@@ -24,12 +28,14 @@ const FFMPEG = ffmpegStatic ?? "ffmpeg";
 /**
  * POST /api/voice-cloning — Typecast instant cloning with consent.
  *
- * Guards (research/07 B.4): authenticated user → sample size + duration
- * (5–150s, probed server-side with ffmpeg) → consent attestation recorded
- * BEFORE the provider call → clone slot check (50) → Typecast clone →
+ * Guards (research/07 B.4): authenticated user → provider configured +
+ * kill-switch + spend cap → sample size + duration (5–150s, probed with
+ * ffmpeg) → clone attempt cap (5/h) → slot check (50) → consent attestation
+ * recorded (bound to the SERVER-computed SHA-256 of the sample) → credits
+ * debited (2,500/attempt, refunded on failure) → Typecast clone →
  * owner-scoped custom voice registered → preview available.
  *
- * Body: { sampleBase64, sampleMime, name, language?, consent, sampleHash }
+ * Body: { sampleBase64, sampleMime, name, language?, consent }
  */
 
 const CloneSchema = z.object({
@@ -38,7 +44,6 @@ const CloneSchema = z.object({
   name: z.string().min(1).max(30),
   language: z.string().max(8).optional(),
   consent: z.boolean().refine((v) => v === true, { message: "consent required" }),
-  sampleHash: z.string().max(128).optional(),
 });
 
 const MIN_DURATION_S = 5;
@@ -65,11 +70,6 @@ async function probeDuration(sample: Buffer): Promise<number | null> {
   }
 }
 
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  return xff?.split(",")[0]?.trim() || request.headers.get("cf-connecting-ip") || "unknown";
-}
-
 export async function POST(request: Request) {
   // 1. Authenticated user required (real session, or sandbox cookie without Supabase)
   const { userId, supabaseConfigured } = await resolveSession();
@@ -79,6 +79,26 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: "Voice cloning is being configured — try again soon, or use the local test playground.", code: "billing_unavailable" },
+      { status: 503 },
+    );
+  }
+
+  // 1b. Provider must actually be configured (not just registered)
+  if (!process.env.TYPECAST_API_KEY) {
+    return NextResponse.json(
+      { error: "Voice cloning is being configured — try again soon.", code: "billing_unavailable" },
+      { status: 503 },
+    );
+  }
+  if (isProviderKillSwitched("typecast")) {
+    return NextResponse.json(
+      { error: "This voice engine is temporarily unavailable.", code: "voice_engine_unavailable" },
+      { status: 503 },
+    );
+  }
+  if (!(await providerWithinSpendCap("typecast"))) {
+    return NextResponse.json(
+      { error: "This voice engine has reached its daily spend limit.", code: "voice_engine_unavailable" },
       { status: 503 },
     );
   }
@@ -93,7 +113,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { sampleBase64, name, language, sampleHash } = parsed.data;
+  const { sampleBase64, name, language } = parsed.data;
   const sample = Buffer.from(sampleBase64, "base64");
 
   if (sample.length === 0) {
@@ -123,20 +143,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Consent attestation recorded BEFORE the provider call (immutable).
-  //    The sample hash is a real SHA-256 of the content (rights proof).
-  const contentHash = `sha256:${createHash("sha256").update(sample).digest("hex")}`;
-  recordConsent({
-    userId,
-    voiceId: "pending", // bound to the real clone id after success (updateConsentVoiceId)
-    sampleHash: sampleHash ?? contentHash,
-    attestation: `I attest I own the rights to this voice sample and consent to it being cloned. (${new Date().toISOString()})`,
-    language,
-    ip: clientIp(request),
-    userAgent: request.headers.get("user-agent") ?? undefined,
-  });
-
-  // 3b. Clone attempt cap (5/hour — failed clones still cost provider time)
+  // 3. Clone attempt cap (5/hour — failed clones still cost provider time)
   if (cloneAttemptsRemaining(userId) <= 0) {
     return NextResponse.json(
       { error: "Too many clone attempts. Try again in an hour.", code: "rate_limited" },
@@ -154,7 +161,35 @@ export async function POST(request: Request) {
     );
   }
 
-  // 5. Clone via Typecast
+  // 5. Consent attestation — recorded only after all guards pass, and bound
+  //    to the SERVER-computed SHA-256 of the actual sample (client-sent
+  //    hashes are ignored — they must match the content that was cloned).
+  const contentHash = `sha256:${createHash("sha256").update(sample).digest("hex")}`;
+  recordConsent({
+    userId,
+    voiceId: "pending", // bound to the real clone id after success (updateConsentVoiceId)
+    sampleHash: contentHash,
+    attestation: `I attest I own the rights to this voice sample and consent to it being cloned. (${new Date().toISOString()})`,
+    language,
+    ip: clientIp(request),
+    userAgent: request.headers.get("user-agent") ?? undefined,
+  });
+
+  // 6. Bill credits (refunded if the clone fails)
+  const generationId = crypto.randomUUID();
+  try {
+    await debitCredits({ userId, amount: CLONE_CREDIT_COST, generationId, description: `voice clone: ${name}` });
+  } catch (err) {
+    if (err instanceof InsufficientCreditsError) {
+      return NextResponse.json(
+        { error: "Not enough credits to clone a voice. Top up to continue.", code: "insufficient_credits" },
+        { status: 402 },
+      );
+    }
+    throw err;
+  }
+
+  // 7. Clone via Typecast
   try {
     const provider = getProvider("typecast");
     const cloneId = await provider.clone!(sample, name, { model: "ssfm-v30", language });
@@ -175,13 +210,21 @@ export async function POST(request: Request) {
       providerMeta: { cloned: true },
     };
 
-    registerCustomVoice(voice, userId, sampleHash);
-    updateConsentVoiceId(sampleHash ?? contentHash, publicId);
+    registerCustomVoice(voice, userId, contentHash);
+    updateConsentVoiceId(contentHash, publicId);
 
     // slotsRemaining() already reflects the registered clone — no -1
-    return NextResponse.json({ voice, slotsRemaining: slotsRemaining(userId) }, { status: 201 });
+    return NextResponse.json(
+      { voice, slotsRemaining: slotsRemaining(userId), creditsCharged: CLONE_CREDIT_COST },
+      { status: 201 },
+    );
   } catch (err) {
     console.error("[voice-cloning] clone failed", err);
+    try {
+      await refundCredits({ userId, amount: CLONE_CREDIT_COST, generationId, description: "refunded failed clone" });
+    } catch (refundErr) {
+      console.error("[voice-cloning] refund failed (manual action needed)", refundErr);
+    }
     return NextResponse.json(
       { error: "Cloning failed. Try another sample.", code: "clone_failed" },
       { status: 502 },

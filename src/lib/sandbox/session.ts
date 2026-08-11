@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 /**
  * Local sandbox session — lets you test the whole app (studio, premium,
@@ -6,7 +6,9 @@ import { randomUUID } from "node:crypto";
  *
  * How it works:
  *  - When Supabase env vars are missing, `resolveSession()` falls back to a
- *    `lv_sandbox_user` cookie set by `POST /api/dev/session`.
+ *    signed `lv_sandbox_user` cookie set by `POST /api/dev/session`.
+ *  - The cookie value is `userId.signature` (HMAC-SHA256). Unsigned or forged
+ *    cookies are rejected, so the sandbox cannot impersonate another user.
  *  - When Supabase IS configured, the cookie is ignored — real auth wins.
  *  - Sandbox users get credits via the in-memory ledger and a referral code,
  *    so billing/referral flows can be exercised end-to-end locally.
@@ -15,6 +17,17 @@ import { randomUUID } from "node:crypto";
  */
 
 const SANDBOX_COOKIE = "lv_sandbox_user";
+
+/** signing secret: env override, else a random secret generated once per process */
+let signingSecret: string = process.env.SANDBOX_COOKIE_SECRET ?? "";
+if (!signingSecret) {
+  signingSecret = createHmac("sha256", crypto.randomUUID()).digest("hex");
+}
+
+export function signSandboxUserId(userId: string): string {
+  const signature = createHmac("sha256", signingSecret).update(userId).digest("hex");
+  return `${userId}.${signature}`;
+}
 
 export function supabaseConfigured(): boolean {
   return Boolean(
@@ -45,7 +58,9 @@ async function resolveSupabaseUser(): Promise<string | undefined> {
 async function sandboxUserId(): Promise<string | undefined> {
   try {
     const { cookies } = await import("next/headers");
-    return (await cookies()).get(SANDBOX_COOKIE)?.value;
+    const value = (await cookies()).get(SANDBOX_COOKIE)?.value;
+    if (!value) return undefined;
+    return verifySandboxUserId(value);
   } catch {
     return undefined;
   }
@@ -87,4 +102,16 @@ export async function createSandboxUser(name?: string): Promise<{
 
 export function sandboxCookieName(): string {
   return SANDBOX_COOKIE;
+}
+
+export function verifySandboxUserId(value: string): string | undefined {
+  const dot = value.lastIndexOf(".");
+  if (dot <= 0 || dot === value.length - 1) return undefined;
+  const userId = value.slice(0, dot);
+  const signature = value.slice(dot + 1);
+  const expected = createHmac("sha256", signingSecret).update(userId).digest("hex");
+  const a = Buffer.from(signature, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined;
+  return userId;
 }
