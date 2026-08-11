@@ -91,7 +91,7 @@ export interface RazorpayEvent {
   payment?: { id?: string; status?: string };
   payload?: {
     payment?: { entity?: { id?: string; status?: string; amount?: number } };
-    payment_link?: { entity?: { id?: string; reference_id?: string; status?: string } };
+    payment_link?: { entity?: { id?: string; reference_id?: string; status?: string; amount_paid?: number } };
   };
 }
 

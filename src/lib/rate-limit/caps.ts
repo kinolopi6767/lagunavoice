@@ -16,9 +16,19 @@ interface DayCounter {
 }
 
 const users = new Map<string, DayCounter>();
+const MAX_KEYS = 10_000;
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** bound memory: drop stale-day counters when the map grows large */
+function prune(): void {
+  if (users.size < MAX_KEYS) return;
+  const today = todayKey();
+  for (const [key, entry] of users) {
+    if (entry.date !== today) users.delete(key);
+  }
 }
 
 function getEntry(key: string): DayCounter {
@@ -40,6 +50,7 @@ export interface CapResult {
 
 /** consume chars for a free (Edge) generation; guests also use a generation slot */
 export function consumeFreeChars(key: string, chars: number, opts?: { guest?: boolean }): CapResult {
+  prune();
   const entry = getEntry(key);
   if (opts?.guest && entry.generations >= GUEST_DAILY_GENERATIONS) {
     return { allowed: false, remainingChars: EDGE_DAILY_CHARS - entry.chars, reason: "daily_generation_limit" };

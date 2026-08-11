@@ -26,6 +26,25 @@ export interface CreditOrder {
 
 const orders = new Map<string, CreditOrder>();
 const processedWebhooks = new Set<string>();
+const MAX_ORDERS = 5_000;
+const WEBHOOK_TTL_MS = 24 * 60 * 60 * 1_000;
+const webhookStoredAt = new Map<string, number>();
+
+function prune(): void {
+  if (orders.size > MAX_ORDERS) {
+    const oldest = [...orders.values()].sort((a, b) => a.createdAt - b.createdAt).slice(0, orders.size - MAX_ORDERS);
+    for (const o of oldest) orders.delete(o.id);
+  }
+  if (processedWebhooks.size >= MAX_ORDERS) {
+    const now = Date.now();
+    for (const id of processedWebhooks) {
+      if (now - (webhookStoredAt.get(id) ?? 0) > WEBHOOK_TTL_MS) {
+        processedWebhooks.delete(id);
+        webhookStoredAt.delete(id);
+      }
+    }
+  }
+}
 
 export function createOrder(input: {
   userId: string;
@@ -35,6 +54,7 @@ export function createOrder(input: {
   provider: OrderProvider;
   currency?: string;
 }): CreditOrder {
+  prune();
   const order: CreditOrder = {
     id: `ord_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`,
     userId: input.userId,
@@ -89,6 +109,7 @@ export async function confirmOrderPaid(orderId: string, opts?: { webhookId?: str
     if (opts?.webhookId) {
       order.webhookId = opts.webhookId;
       processedWebhooks.add(opts.webhookId);
+      webhookStoredAt.set(opts.webhookId, Date.now());
     }
     return order;
   } finally {

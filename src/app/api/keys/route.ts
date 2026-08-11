@@ -18,17 +18,20 @@ export async function GET() {
   const { userId } = await resolveSession();
   if (!userId) return NextResponse.json({ error: "Sign in required.", code: "unauthorized" }, { status: 401 });
 
-  return NextResponse.json({
-    keys: listApiKeys(userId).map((k) => ({
-      id: k.id,
-      name: k.name,
-      keyPrefix: k.keyPrefix,
-      scopes: k.scopes,
-      rateLimitRpm: k.rateLimitRpm,
-      lastUsedAt: k.lastUsedAt ?? undefined,
-      revokedAt: k.revokedAt ?? undefined,
-    })),
-  });
+  return NextResponse.json(
+    {
+      keys: listApiKeys(userId).map((k) => ({
+        id: k.id,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        scopes: k.scopes,
+        rateLimitRpm: k.rateLimitRpm,
+        lastUsedAt: k.lastUsedAt ?? undefined,
+        revokedAt: k.revokedAt ?? undefined,
+      })),
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 export async function POST(request: Request) {

@@ -13,6 +13,11 @@ export const pool =
   globalForDb.pool ??
   new Pool({
     connectionString: process.env.DATABASE_URL,
+    // Supabase direct connections are typically capped at 4 — oversubscribing
+    // queues queries; a 5s connect timeout fails fast instead of hanging.
+    max: 4,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 30_000,
   });
 
 if (process.env.NODE_ENV !== "production") globalForDb.pool = pool;

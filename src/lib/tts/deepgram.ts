@@ -148,45 +148,60 @@ export class DeepgramProvider implements TtsProvider {
       sample_rate: "24000",
     });
 
+    // Promise-driven chunk queue: yield as WebSocket messages arrive so the
+    // browser hears the first audio within ~1 message (sub-second TTFB)
+    // instead of after the whole utterance is synthesized.
+    const queue: Buffer[] = [];
+    const HIGH_WATER = 128;
+    let notify: (() => void) | null = null;
+    let flushed = false;
+    let streamError: Error | null = null;
+
+    const wake = () => {
+      const fn = notify;
+      notify = null;
+      fn?.();
+    };
+
     try {
       await connection.waitForOpen();
       connection.sendText({ type: "Speak", text });
       connection.sendFlush({ type: "Flush" });
 
-      const queue: Buffer[] = [];
-      let flushResolve: (() => void) | null = null;
-      let flushed = false;
-      let streamError: Error | null = null;
-
       connection.on("message", (message) => {
         if (typeof message === "string") {
           queue.push(Buffer.from(message, "base64"));
+          wake();
         } else if (message.type === "Flushed") {
           flushed = true;
-          flushResolve?.();
+          wake();
         }
       });
       connection.on("error", (err) => {
-        // must terminate the drain loop, otherwise `while (!flushed)` hangs forever
+        // must terminate the drain loop, otherwise the pull would hang forever
         streamError = err instanceof Error ? err : new Error(String(err));
         flushed = true;
-        flushResolve?.();
+        wake();
       });
 
-      const awaitFlush = () =>
-        new Promise<void>((resolve) => {
-          if (flushed) return resolve();
-          flushResolve = resolve;
-        });
-
-      // drain as chunks arrive, then final drain after Flushed
-      while (!flushed) {
-        await awaitFlush();
+      while (!flushed || queue.length > 0) {
+        if (queue.length > 0) {
+          yield queue.shift()!;
+          // backpressure: pause pulling until the WebSocket consumer drains
+          if (queue.length >= HIGH_WATER) {
+            while (queue.length >= HIGH_WATER && !flushed) {
+              await new Promise<void>((resolve) => {
+                notify = resolve;
+              });
+            }
+          }
+        } else {
+          await new Promise<void>((resolve) => {
+            notify = resolve;
+          });
+        }
       }
       if (streamError) throw streamError;
-      while (queue.length > 0) {
-        yield queue.shift()!;
-      }
     } finally {
       connection.close();
     }

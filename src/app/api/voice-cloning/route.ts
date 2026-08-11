@@ -126,6 +126,17 @@ export async function POST(request: Request) {
     );
   }
 
+  // 3. Clone attempt cap FIRST (5/hour — failed clones still cost provider
+  //    time, and probing a 3 MB file costs CPU; reject before probing).
+  //    The attempt is RECORDED only after validation passes (step 6) so a
+  //    bad upload doesn't burn an attempt.
+  if (cloneAttemptsRemaining(userId) <= 0) {
+    return NextResponse.json(
+      { error: "Too many clone attempts. Try again in an hour.", code: "rate_limited" },
+      { status: 429 },
+    );
+  }
+
   const duration = await probeDuration(sample);
   if (duration === null) {
     return NextResponse.json(
@@ -143,15 +154,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Clone attempt cap (5/hour — failed clones still cost provider time)
-  if (cloneAttemptsRemaining(userId) <= 0) {
-    return NextResponse.json(
-      { error: "Too many clone attempts. Try again in an hour.", code: "rate_limited" },
-      { status: 429 },
-    );
-  }
-  recordCloneAttempt(userId);
-
   // 4. Slot check
   const remaining = slotsRemaining(userId);
   if (remaining <= 0) {
@@ -165,9 +167,11 @@ export async function POST(request: Request) {
   //    sample (client-sent hashes are ignored; must match what was cloned).
   const contentHash = `sha256:${createHash("sha256").update(sample).digest("hex")}`;
 
-  // 6. Bill credits (refunded if the clone fails)
+  // 6. Bill credits (refunded if the clone fails); record the attempt only
+  //    once the sample has passed all validations above
   const generationId = crypto.randomUUID();
   try {
+    recordCloneAttempt(userId);
     await debitCredits({ userId, amount: CLONE_CREDIT_COST, generationId, description: `voice clone: ${name}` });
   } catch (err) {
     if (err instanceof InsufficientCreditsError) {

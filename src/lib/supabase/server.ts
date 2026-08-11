@@ -19,8 +19,13 @@ export async function createClient() {
         },
         setAll(cookiesToSet) {
           try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
+            const secure = process.env.NODE_ENV === "production";
+            cookiesToSet.forEach(({ name, value }) =>
+              cookieStore.set(name, value, {
+                httpOnly: true,
+                secure,
+                sameSite: "lax",
+              }),
             );
           } catch {
             // Called from a Server Component — safe to ignore when middleware refreshes sessions

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
+import { createThrottle } from "@/lib/rate-limit/throttle";
 import { grantReferralBonus } from "@/lib/credits/ledger";
 import { getReferralSummary, REFERRAL_BONUS, claimReferral } from "@/lib/referrals/store";
 
@@ -16,6 +18,10 @@ import { getReferralSummary, REFERRAL_BONUS, claimReferral } from "@/lib/referra
 const ClaimSchema = z.object({
   code: z.string().min(4).max(40),
 });
+
+// claim farming guard: 10 claims/account/day, 25/IP/day
+const userClaimThrottle = createThrottle({ max: 10, windowMs: 24 * 60 * 60 * 1_000 });
+const ipClaimThrottle = createThrottle({ max: 25, windowMs: 24 * 60 * 60 * 1_000 });
 
 export async function GET() {
   const { userId, supabaseConfigured } = await resolveSession();
@@ -44,6 +50,13 @@ export async function POST(request: Request) {
   const parsed = ClaimSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
+  }
+
+  if (!userClaimThrottle.check(refereeId).allowed) {
+    return NextResponse.json({ error: "Too many claims today.", code: "rate_limited" }, { status: 429 });
+  }
+  if (!ipClaimThrottle.check(clientIp(request)).allowed) {
+    return NextResponse.json({ error: "Too many claims from this network.", code: "rate_limited" }, { status: 429 });
   }
 
   const claim = claimReferral(parsed.data.code, refereeId);

@@ -30,6 +30,12 @@ export interface LedgerEntry {
 
 const balances = new Map<string, number>();
 const ledger: LedgerEntry[] = [];
+const LEDGER_CAP = 10_000; // ring-buffer: oldest entries drop to bound memory
+
+function pushLedger(entry: LedgerEntry): void {
+  ledger.push(entry);
+  if (ledger.length > LEDGER_CAP) ledger.splice(0, ledger.length - LEDGER_CAP);
+}
 
 export class InsufficientCreditsError extends Error {
   constructor() {
@@ -69,7 +75,7 @@ export function memoryApply(userId: string, amount: number, entry: Omit<LedgerEn
     throw new InsufficientCreditsError();
   }
   balances.set(userId, next);
-  ledger.push({
+  pushLedger({
     id: `mem_${ledger.length + 1}_${Date.now().toString(36)}`,
     userId,
     amount,

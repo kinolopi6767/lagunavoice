@@ -22,9 +22,16 @@ const RATES: Record<string, { premium: number; flagship: number }> = {
 const STT_RATE_PER_MIN_CENTS = 0.43; // Nova-3 $0.0043/min → cents per 1000s
 
 const byDate = new Map<string, Map<string, UsageRow>>();
+const MAX_DAYS = 90; // keep COGS history for 90 days, then drop the oldest
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function pruneOldDays(): void {
+  if (byDate.size <= MAX_DAYS) return;
+  const oldest = [...byDate.keys()].sort().slice(0, byDate.size - MAX_DAYS);
+  for (const k of oldest) byDate.delete(k);
 }
 
 export async function recordProviderUsage(
@@ -33,6 +40,7 @@ export async function recordProviderUsage(
   sttSeconds: number,
   opts?: { tier?: "premium" | "flagship"; errored?: boolean },
 ): Promise<UsageRow> {
+  pruneOldDays();
   const key = todayKey();
   const day = byDate.get(key) ?? new Map<string, UsageRow>();
   const row: UsageRow = day.get(provider) ?? {

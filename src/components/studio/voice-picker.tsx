@@ -9,6 +9,30 @@ import { cn } from "@/lib/utils";
 import type { VoiceRecord } from "@/lib/tts/types";
 
 /**
+ * Module-level catalog cache (60s TTL) shared by every VoicePicker on the
+ * page — the Studio mounts two pickers (quick + long-form) and both used to
+ * fetch the same 200-voice payload in parallel. The catalog is synced
+ * server-side every hour, so a 60s client TTL is always fresh enough.
+ */
+const catalogCache = new Map<string, { at: number; voices: VoiceRecord[] }>();
+const CATALOG_TTL_MS = 60_000;
+
+async function fetchCatalog(url: string): Promise<VoiceRecord[] | null> {
+  const hit = catalogCache.get(url);
+  if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.voices;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { voices?: VoiceRecord[] };
+    const voices = Array.isArray(data.voices) ? data.voices : [];
+    catalogCache.set(url, { at: Date.now(), voices });
+    return voices;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Searchable voice picker used by the Studio (quick + long-form) and the
  * test playground. Loads the free tier by default; with `tier="all"` it adds
  * Free/Premium/Flagship filter tabs. Shows a skeleton while loading, an
@@ -44,23 +68,18 @@ export function VoicePicker({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/voices?limit=${withTabs ? 200 : limit}&tier=${withTabs ? "all" : tier}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ voices: VoiceRecord[] }>) : null))
-      .then((d) => {
-        if (cancelled) return;
-        const loaded = Array.isArray(d?.voices) ? d.voices : [];
-        setVoices(loaded);
-        if (!d) setError("Could not load the voice list.");
+    const url = `/api/voices?limit=${withTabs ? 200 : limit}&tier=${withTabs ? "all" : tier}`;
+    fetchCatalog(url).then((loaded) => {
+      if (cancelled) return;
+      setVoices(loaded ?? []);
+      if (!loaded) setError("Could not load the voice list.");
+      if (loaded) {
         // never auto-select a paid voice for a guest
         const fallback = loaded.find((v) => v.tier === "free") ?? loaded[0];
         if (fallback && !value) onSelect(fallback.id);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Could not load the voice list.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      }
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };

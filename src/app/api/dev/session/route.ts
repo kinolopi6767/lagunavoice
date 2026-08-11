@@ -26,9 +26,17 @@ import {
  */
 
 const MAX_MINTS_PER_IP_PER_DAY = 3;
+const MAX_TRACKED_KEYS = 2_000;
 const mintCounts = new Map<string, number>();
 
 function consumeMint(ip: string): boolean {
+  // prune stale per-day keys once the map grows large
+  if (mintCounts.size >= MAX_TRACKED_KEYS) {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const key of mintCounts.keys()) {
+      if (!key.endsWith(today)) mintCounts.delete(key);
+    }
+  }
   const key = `${ip}:${new Date().toISOString().slice(0, 10)}`;
   const used = mintCounts.get(key) ?? 0;
   if (used >= MAX_MINTS_PER_IP_PER_DAY) return false;
@@ -36,29 +44,8 @@ function consumeMint(ip: string): boolean {
   return true;
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   const configured = supabaseConfigured();
-  const enter = new URL(request.url).searchParams.get("action");
-  if (!configured && enter === "enter") {
-    const ip = clientIp(request);
-    if (!consumeMint(ip)) {
-      return NextResponse.json(
-        { error: "Sandbox user mint limit reached for today.", code: "rate_limited" },
-        { status: 429 },
-      );
-    }
-    const name = new URL(request.url).searchParams.get("name") ?? "tester";
-    const user = await createSandboxUser(name);
-    const res = NextResponse.json({
-      ok: true, sandbox: true, userId: user.userId,
-      referralCode: user.referralCode, credits: user.credits,
-      hint: "Sandbox session entered via ?action=enter (link-based).",
-    });
-    res.cookies.set(sandboxCookieName(), signSandboxUserId(user.userId), {
-      httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7,
-    });
-    return res;
-  }
   if (configured) {
     return NextResponse.json({ supabaseConfigured: true, sandbox: false });
   }
@@ -110,6 +97,7 @@ export async function POST(request: Request) {
   });
   res.cookies.set(sandboxCookieName(), signSandboxUserId(user.userId), {
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,

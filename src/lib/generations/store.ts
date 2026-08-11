@@ -107,7 +107,10 @@ export function startGeneration(opts: {
     } catch (err) {
       failed = true;
       gen.status = "failed";
-      gen.error = (err as Error).message;
+      // never leak provider internals (endpoints, status text) to API clients —
+      // log the detail server-side, store a generic message
+      console.error(`[generations] ${id} failed`, err);
+      gen.error = "The voice engine could not complete this request. Please try again.";
     } finally {
       if (onDone) {
         try {

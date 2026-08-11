@@ -23,7 +23,7 @@ const POLL_BLOCK = `curl https://api.lugunavoice.com/v1/generations/gen_... \\
 
 const JS_BLOCK = `import { LugunaVoice } from "@lugunavoice/sdk";
 
-const client = new LugunaVoice(process.env.LUGUNA_API_KEY);
+const client = new LugunaVoice(\${process.env.LUGUNA_API_KEY});
 const gen = await client.generateAndWait({
   text: "Hello, this is LugunaVoice.",
   voice: "fs_voice_edge_en-US-AriaNeural",

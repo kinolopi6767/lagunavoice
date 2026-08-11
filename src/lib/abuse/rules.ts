@@ -39,8 +39,24 @@ const velocity = new Map<string, VelocityCounter>();
 const VELOCITY_WINDOW_MS = 60_000;
 const VELOCITY_LIMIT = 10; // generations per minute (R2)
 const STRIKES_TO_BAN = 3;
+const MAX_FLAGS = 500;
+const MAX_VELOCITY_KEYS = 5_000;
+
+/** keep the in-memory queues bounded: drop stale velocity windows, cap flags */
+function prune(): void {
+  if (velocity.size >= MAX_VELOCITY_KEYS) {
+    const now = Date.now();
+    for (const [k, v] of velocity) {
+      if (now - v.windowStart > VELOCITY_WINDOW_MS) velocity.delete(k);
+    }
+  }
+  if (flags.length > MAX_FLAGS) {
+    flags.splice(0, flags.length - MAX_FLAGS);
+  }
+}
 
 function flag(f: Omit<AbuseFlag, "id" | "status" | "createdAt">): AbuseFlag {
+  prune();
   const record: AbuseFlag = {
     id: `flag_${flags.length + 1}_${Date.now().toString(36)}`,
     status: "open",
@@ -84,6 +100,7 @@ export function listBans(): Ban[] {
 
 /** R8 — moderation strikes: 3 flagged inputs → auto temporary ban */
 export function recordModerationStrike(userId: string): void {
+  if (moderationStrikes.size >= 10_000) moderationStrikes.clear(); // bounded memory
   const strikes = (moderationStrikes.get(userId) ?? 0) + 1;
   moderationStrikes.set(userId, strikes);
   if (strikes >= STRIKES_TO_BAN) {

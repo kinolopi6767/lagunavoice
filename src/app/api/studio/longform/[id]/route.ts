@@ -22,15 +22,18 @@ export async function GET(
     return NextResponse.json({ error: "Job not found or expired.", code: "not_found" }, { status: 404 });
   }
 
-  return NextResponse.json({
-    jobId: id,
-    status: job.status,
-    total: job.total,
-    done: job.done,
-    error: job.error,
-    audioBase64: job.audioBase64,
-    mimeType: job.mimeType,
-    srt: job.srt,
-    durationMs: job.durationMs,
-  });
+  return NextResponse.json(
+    {
+      jobId: id,
+      status: job.status,
+      total: job.total,
+      done: job.done,
+      error: job.error,
+      audioBase64: job.audioBase64,
+      mimeType: job.mimeType,
+      srt: job.srt,
+      durationMs: job.durationMs,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

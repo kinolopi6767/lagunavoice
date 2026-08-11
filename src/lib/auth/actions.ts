@@ -1,8 +1,10 @@
 "use server";
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createThrottle } from "@/lib/rate-limit/throttle";
 import { claimReferral, registerReferralCode } from "@/lib/referrals/store";
 
 export interface AuthActionState {
@@ -15,8 +17,22 @@ export interface AuthActionState {
  * they return a friendly error instead of crashing the form.
  */
 
+/** brute-force / signup-spam throttle per IP */
+const authThrottle = createThrottle({ max: 8, windowMs: 15 * 60 * 1_000 });
+const signupThrottle = createThrottle({ max: 4, windowMs: 15 * 60 * 1_000 });
+
+async function callerIp(): Promise<string> {
+  const h = await headers();
+  return h.get("x-forwarded-for")?.split(",").pop()?.trim() ?? "unknown";
+}
+
 function appUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const url = process.env.NEXT_PUBLIC_APP_URL;
+  if (url) return url.replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_APP_URL must be set in production (auth redirects would point at localhost).");
+  }
+  return "http://localhost:3000";
 }
 
 /** Email + password sign in */
@@ -32,6 +48,11 @@ export async function signInWithEmail(
   }
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
+
+  const ip = await callerIp();
+  if (!authThrottle.check(ip).allowed) {
+    return { error: "Too many attempts. Try again in a few minutes." };
+  }
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
@@ -58,6 +79,11 @@ export async function signUpWithEmail(
 
   if (password.length < 8) {
     return { error: "Password must be at least 8 characters." };
+  }
+
+  const ip = await callerIp();
+  if (!signupThrottle.check(ip).allowed) {
+    return { error: "Too many sign-ups from this network. Try again later." };
   }
 
   const { data, error } = await supabase.auth.signUp({
@@ -108,6 +134,10 @@ export async function signInWithGoogle(): Promise<AuthActionState & { url?: stri
   } catch {
     return { error: "Google sign-in is not configured yet — try on the deployed app or use the local test playground." };
   }
+  const ip = await callerIp();
+  if (!authThrottle.check(ip).allowed) {
+    return { error: "Too many attempts. Try again in a few minutes." };
+  }
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
@@ -119,7 +149,6 @@ export async function signInWithGoogle(): Promise<AuthActionState & { url?: stri
   }
   return { ok: true, url: data.url };
 }
-
 /** Sign out */
 export async function signOut(): Promise<void> {
   try {

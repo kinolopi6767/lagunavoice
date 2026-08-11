@@ -46,6 +46,14 @@ export interface SessionResolution {
 
 async function resolveSupabaseUser(): Promise<string | undefined> {
   try {
+    // Fast path: no session cookie at all → definitely signed out. This skips
+    // a Supabase network round-trip on every anonymous request (voice catalog
+    // reads, previews, landing demo, etc.).
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    const hasSessionCookie = cookieStore.getAll().some((c) => c.name.startsWith("sb-"));
+    if (!hasSessionCookie) return undefined;
+
     const { createClient } = await import("@/lib/supabase/server");
     const supabase = await createClient();
     const { data } = await supabase.auth.getUser();

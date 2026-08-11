@@ -45,15 +45,19 @@ const dbConfigured = () => Boolean(process.env.DATABASE_URL);
 
 /**
  * Run the Postgres path, falling back to the in-memory store when the
- * connection fails (misconfigured/unreachable DATABASE_URL). Keeps the app
- * usable locally and in demos instead of 500ing on every billing call.
+ * connection is not configured (local dev/demo without DATABASE_URL).
+ * CRITICAL: when DATABASE_URL IS configured and the DB call fails, the error
+ * propagates instead of failing open — a webhook credit must never silently
+ * land in process memory (it would vanish on restart and the payment would
+ * be lost). Fail-closed on the money path.
  */
 async function withFallback<T>(label: string, dbPath: () => Promise<T>, memPath: () => T): Promise<T> {
+  if (!dbConfigured()) return memPath();
   try {
     return await dbPath();
   } catch (err) {
-    console.error(`[ledger] ${label}: DB path failed, falling back to memory`, err);
-    return memPath();
+    console.error(`[ledger] ${label}: DB path failed`, err);
+    throw err;
   }
 }
 

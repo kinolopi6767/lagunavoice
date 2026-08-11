@@ -15,9 +15,19 @@ interface Counter {
 }
 
 const store = new Map<string, Counter>();
+const MAX_IPS = 10_000;
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** bound memory: drop stale-day counters when the map grows large */
+function prune(): void {
+  if (store.size < MAX_IPS) return;
+  const today = todayKey();
+  for (const [ip, c] of store) {
+    if (c.date !== today) store.delete(ip);
+  }
 }
 
 export function getDemoRemaining(ip: string): number {
@@ -30,6 +40,7 @@ export function getDemoRemaining(ip: string): number {
  * Consume one demo generation. Returns { allowed, remaining }.
  */
 export function consumeDemoGeneration(ip: string): { allowed: boolean; remaining: number } {
+  prune();
   const key = todayKey();
   const entry = store.get(ip);
 

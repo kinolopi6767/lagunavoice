@@ -259,7 +259,9 @@ export function startLongFormJob(opts: {
       job.status = "completed";
     } catch (err) {
       job.status = "failed";
-      job.error = (err as Error).message;
+      // never leak provider internals to the client — log detail server-side
+      console.error("[longform] job failed", err);
+      job.error = "The voice engine could not complete this narration. Please try again.";
     } finally {
       if (workDir) await rm(workDir, { recursive: true, force: true });
       if (onDone) {

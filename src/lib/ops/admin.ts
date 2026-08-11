@@ -13,7 +13,18 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1_000;
-const failedLogins = new Map<string, { count: number; lockedUntil: number }>();
+const MAX_TRACKED_IPS = 1_000;
+const failedLogins = new Map<string, { count: number; lockedUntil: number; lastAt: number }>();
+
+function pruneFailedLogins(): void {
+  if (failedLogins.size < MAX_TRACKED_IPS) return;
+  const now = Date.now();
+  for (const [ip, entry] of failedLogins) {
+    if (entry.lockedUntil < now && now - entry.lastAt > 24 * 60 * 60 * 1_000) {
+      failedLogins.delete(ip);
+    }
+  }
+}
 
 function secret(): string | null {
   return process.env.ADMIN_PASSWORD || null;
@@ -32,7 +43,9 @@ export function adminLockoutState(ip: string): { lockedUntil: number } {
 /** record a failed login; returns true once the IP is locked out */
 export function recordFailedLogin(ip: string): boolean {
   const now = Date.now();
-  const entry = failedLogins.get(ip) ?? { count: 0, lockedUntil: 0 };
+  pruneFailedLogins();
+  const entry = failedLogins.get(ip) ?? { count: 0, lockedUntil: 0, lastAt: now };
+  entry.lastAt = now;
   if (entry.lockedUntil > now) return true;
   if (entry.lockedUntil > 0 && entry.lockedUntil <= now) {
     entry.count = 0;
@@ -79,11 +92,18 @@ export function verifyAdminToken(token: string | null | undefined): boolean {
 
 export function adminCookieOptions(): {
   httpOnly: boolean;
+  secure: boolean;
   sameSite: "lax";
   path: string;
   maxAge: number;
 } {
-  return { httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS / 1_000 };
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_TTL_MS / 1_000,
+  };
 }
 
 /** route-level admin check from a NextRequest */

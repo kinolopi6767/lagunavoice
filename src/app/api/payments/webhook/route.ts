@@ -58,7 +58,11 @@ export async function POST(request: Request) {
   }
 
   // amount integrity: never credit more than the pack price (INR paise)
-  const paidAmount = event.payload?.payment?.entity?.amount;
+  // `payment_link.paid` carries the amount on payment_link.entity.amount_paid;
+  // direct card events carry it on payment.entity.amount
+  const paidAmount =
+    event.payload?.payment_link?.entity?.amount_paid ??
+    event.payload?.payment?.entity?.amount;
   if (typeof paidAmount === "number" && paidAmount > 0) {
     try {
       assertAmountMatchesOrder(order, paidAmount, "INR");

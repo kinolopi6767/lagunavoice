@@ -31,8 +31,7 @@ export async function GET() {
       description: e.description,
       createdAt: e.createdAt,
     })),
-  });
-}
+  }, { headers: { "Cache-Control": "private, no-store" } });}
 
 /**
  * POST /api/payments/orders/[id]/confirm — ADMIN only.

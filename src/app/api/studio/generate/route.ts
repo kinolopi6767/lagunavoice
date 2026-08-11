@@ -183,20 +183,34 @@ export async function POST(request: Request) {
       description: `voice: ${voice.name} (${voice.provider}, ${voice.tier})`,
     });
 
-    // providers cap chars/request (typecast 2,000) — chunk and stitch like long-form
+    // providers cap chars/request (typecast 2,000) — chunk and stitch like
+    // long-form; synthesize chunks with bounded concurrency so a 3-chunk
+    // script doesn't take 3× the single-chunk latency
     const chunks = splitText(text, provider.maxCharsPerRequest);
     if (chunks.length === 0) {
       return NextResponse.json({ error: "Invalid request.", code: "invalid_request" }, { status: 400 });
     }
-    const parts: Buffer[] = [];
+
+    const maxConcurrent = provider.maxConcurrent ?? 2;
+    const parts: Buffer[] = new Array(chunks.length);
     let durationMs = 0;
     let mimeType: "audio/mpeg" | "audio/wav" = "audio/mpeg";
-    for (const chunk of chunks) {
-      const part = await provider.synthesize({ text: chunk, voice, style, pitch, rate });
-      parts.push(part.audio);
-      durationMs += part.durationMs;
-      mimeType = part.mimeType;
+    let cursor = 0;
+    const selectedVoice = voice; // closure-safe copy (narrowing is lost inside worker)
+    async function worker() {
+      for (;;) {
+        const i = cursor++;
+        if (i >= chunks.length) return;
+        const part = await provider.synthesize({ text: chunks[i], voice: selectedVoice, style, pitch, rate });
+        parts[i] = part.audio;
+        durationMs += part.durationMs;
+        if (part.mimeType === "audio/wav") mimeType = "audio/wav";
+      }
     }
+    await Promise.all(
+      Array.from({ length: Math.min(maxConcurrent, chunks.length) }, () => worker()),
+    );
+
     const audio = parts.length > 1 ? Buffer.concat(parts) : parts[0];
     await recordProviderUsage(voice.provider, charCount, 0, { tier: voice.tier === "flagship" ? "flagship" : "premium" });
 

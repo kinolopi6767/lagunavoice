@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveSession } from "@/lib/sandbox/session";
+import { clientIp } from "@/lib/http/client-ip";
+import { createThrottle } from "@/lib/rate-limit/throttle";
 import { getPack, getPlan, priceInr } from "@/lib/pricing/packs";
 import { createOrder, setOrderRef } from "@/lib/payments/orders";
 import { createPaymentLink, RazorpayNotConfiguredError } from "@/lib/payments/razorpay";
@@ -18,6 +20,10 @@ const CheckoutSchema = z.object({
   type: z.enum(["pack", "plan"]),
   slug: z.string(),
 });
+
+// order-spam guard: 5 orders/account/hour, 10/IP/hour
+const orderThrottle = createThrottle({ max: 5, windowMs: 60 * 60 * 1_000 });
+const orderIpThrottle = createThrottle({ max: 10, windowMs: 60 * 60 * 1_000 });
 
 export async function POST(request: Request) {
   // user session required (real session, or sandbox cookie without Supabase)
@@ -41,6 +47,10 @@ export async function POST(request: Request) {
   const product = parsed.data.type === "pack" ? getPack(parsed.data.slug) : getPlan(parsed.data.slug);
   if (!product) {
     return NextResponse.json({ error: "Unknown product.", code: "not_found" }, { status: 404 });
+  }
+
+  if (!orderThrottle.check(userId).allowed || !orderIpThrottle.check(clientIp(request)).allowed) {
+    return NextResponse.json({ error: "Too many orders. Try again in an hour.", code: "rate_limited" }, { status: 429 });
   }
 
   const credits = parsed.data.type === "pack"

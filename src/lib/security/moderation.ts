@@ -17,6 +17,9 @@ export interface ModerationResult {
 
 const MODERATION_URL = "https://api.openai.com/v1/moderations";
 
+/** modapi input limit is 32k chars per call — scan long texts in chunks */
+const CHUNK_CHARS = 32_000;
+
 export async function moderateText(
   text: string,
   inputId?: string,
@@ -28,41 +31,47 @@ export async function moderateText(
   }
 
   try {
-    const res = await fetch(MODERATION_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "omni-moderation-latest",
-        input: text.slice(0, 32_000),
-      }),
-      cache: "no-store",
-    });
-
-    if (!res.ok) {
-      // fail-open on moderation service errors (log; do not block the product)
-      console.error(`[moderation] API error ${res.status}${inputId ? ` (${inputId})` : ""}`);
-      return { verdict: "allow", flaggedCategories: [], scores: {} };
+    const chunks = [];
+    for (let i = 0; i < text.length; i += CHUNK_CHARS) {
+      chunks.push(text.slice(i, i + CHUNK_CHARS));
     }
 
-    const data = (await res.json()) as {
-      results?: Array<{ flagged: boolean; categories?: Record<string, boolean>; category_scores?: Record<string, number> }>;
-    };
+    for (let i = 0; i < chunks.length; i++) {
+      const res = await fetch(MODERATION_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "omni-moderation-latest",
+          input: chunks[i],
+        }),
+        cache: "no-store",
+      });
 
-    const result = data.results?.[0];
-    if (!result) return { verdict: "allow", flaggedCategories: [], scores: {} };
+      if (!res.ok) {
+        // fail-open on moderation service errors (log; do not block the product)
+        console.error(`[moderation] API error ${res.status}${inputId ? ` (${inputId})` : ""}`);
+        return { verdict: "allow", flaggedCategories: [], scores: {} };
+      }
 
-    const flaggedCategories = Object.entries(result.categories ?? {})
-      .filter(([, v]) => v)
-      .map(([k]) => k);
+      const data = (await res.json()) as {
+        results?: Array<{ flagged: boolean; categories?: Record<string, boolean>; category_scores?: Record<string, number> }>;
+      };
 
-    return {
-      verdict: result.flagged ? "block" : "allow",
-      flaggedCategories,
-      scores: result.category_scores ?? {},
-    };
+      const result = data.results?.[0];
+      if (!result) return { verdict: "allow", flaggedCategories: [], scores: {} };
+
+      if (result.flagged) {
+        const flaggedCategories = Object.entries(result.categories ?? {})
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+        return { verdict: "block", flaggedCategories, scores: result.category_scores ?? {} };
+      }
+    }
+
+    return { verdict: "allow", flaggedCategories: [], scores: {} };
   } catch (err) {
     console.error("[moderation] request failed", err);
     return { verdict: "allow", flaggedCategories: [], scores: {} };

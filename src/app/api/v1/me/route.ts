@@ -24,5 +24,4 @@ export async function GET(request: Request) {
     creditsBalance: balance,
     keys: keys.map((k) => ({ id: k.id, name: k.name, keyPrefix: k.keyPrefix, scopes: k.scopes, revokedAt: k.revokedAt ?? undefined })),
     recentLedger: history.slice(0, 10).map((e) => ({ type: e.type, amount: e.amount, balanceAfter: e.balanceAfter, description: e.description, createdAt: e.createdAt })),
-  });
-}
+  }, { headers: { "Cache-Control": "private, no-store" } });}
