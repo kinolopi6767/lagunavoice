@@ -169,11 +169,3 @@ export async function catalogStats(): Promise<{ total: number; free: number; pre
     flagship: state.voices.filter((v) => v.tier === "flagship").length,
   };
 }
-
-/** refresh trigger for the nightly sync job */
-export async function refreshCatalog(): Promise<number> {
-  const voices = await fetchCatalog();
-  state.voices = voices;
-  state.loadedAt = Date.now();
-  return voices.length;
-}

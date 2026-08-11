@@ -165,18 +165,20 @@ export function startLongFormJob(opts: {
 
   // run async — do not block the request
   void (async () => {
-    const workDir = await mkdtemp(join(tmpdir(), "luguna-lf-"));
+    let workDir: string | undefined;
     const paths: string[] = [];
     const durationsMs: number[] = [];
     // words per chunk, keyed by chunk index (concurrency-safe merge later)
     const wordsByChunk = new Map<number, WordTimestamp[]>();
 
     try {
+      const dir = await mkdtemp(join(tmpdir(), "luguna-lf-"));
+      workDir = dir;
       const concurrency =
         voice.provider === "edge" ? 1 : Math.max(1, provider.maxConcurrent - 1);
 
       await mapConcurrent(chunks, concurrency, async (chunk, i) => {
-        const path = join(workDir, `chunk_${String(i).padStart(3, "0")}.mp3`);
+        const path = join(dir, `chunk_${String(i).padStart(3, "0")}.mp3`);
         try {
           const result = await provider.synthesize({
             text: chunk.text,
@@ -259,7 +261,7 @@ export function startLongFormJob(opts: {
       job.status = "failed";
       job.error = (err as Error).message;
     } finally {
-      await rm(workDir, { recursive: true, force: true });
+      if (workDir) await rm(workDir, { recursive: true, force: true });
       if (onDone) {
         try {
           await onDone(job.status === "failed");

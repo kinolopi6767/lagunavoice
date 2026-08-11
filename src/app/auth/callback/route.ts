@@ -7,10 +7,14 @@ import { createClient } from "@/lib/supabase/server";
  * Safe when Supabase is not configured: redirects with a friendly hint
  * instead of crashing.
  */
+function safeNext(raw: string | null): string {
+  return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/studio";
+}
+
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/studio";
+  const next = safeNext(searchParams.get("next"));
 
   if (code) {
     try {

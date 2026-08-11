@@ -17,7 +17,11 @@ const PREVIEWS_PER_IP_PER_DAY = 30;
 const previewCounts = new Map<string, number>();
 
 function consumePreview(ip: string): boolean {
-  const key = `${ip}:${new Date().toISOString().slice(0, 10)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${ip}:${today}`;
+  if (previewCounts.size > 10_000) {
+    for (const k of previewCounts.keys()) if (!k.endsWith(`:${today}`)) previewCounts.delete(k);
+  }
   const used = previewCounts.get(key) ?? 0;
   if (used >= PREVIEWS_PER_IP_PER_DAY) return false;
   previewCounts.set(key, used + 1);

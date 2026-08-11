@@ -123,8 +123,8 @@ export function VoicePicker({
               type="button"
               onClick={() => {
                 setActiveTier(t);
-                // auto-select the first voice of the new tier if nothing selected there
-                if (!filtered.some((v) => v.id === value)) {
+                const current = voices.find((v) => v.id === value);
+                if (current?.tier !== t) {
                   const first = voices.find((v) => v.tier === t);
                   if (first) onSelect(first.id);
                 }

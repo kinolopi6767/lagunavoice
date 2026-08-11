@@ -71,28 +71,33 @@ export function LongFormPanel() {
       }
 
       pollRef.current = setInterval(async () => {
-        const r = await fetch(`/api/studio/longform/${data.jobId}`);
-        if (!r.ok) {
-          // 404 = job expired/not found — stop polling instead of spinning forever
-          stopPolling();
-          setJob(null);
-          setError("The job expired before finishing. Try again with shorter text.");
-          return;
-        }
-        const j = (await r.json()) as JobState;
-        setJob(j);
-
-        if (j.status === "completed") {
-          stopPolling();
-          if (j.audioBase64) {
-            const bytes = Uint8Array.from(atob(j.audioBase64), (c) => c.charCodeAt(0));
-            const blob = new Blob([bytes], { type: j.mimeType ?? "audio/mpeg" });
-            audioBlobRef.current = blob;
-            audioRef.current = new Audio(URL.createObjectURL(blob));
-            setAudioUrl(audioRef.current.src);
+        try {
+          const r = await fetch(`/api/studio/longform/${data.jobId}`);
+          if (!r.ok) {
+            // 404 = job expired/not found — stop polling instead of spinning forever
+            stopPolling();
+            setJob(null);
+            setError("The job expired before finishing. Try again with shorter text.");
+            return;
           }
-        } else if (j.status === "failed") {
+          const j = (await r.json()) as JobState;
+          setJob(j);
+
+          if (j.status === "completed") {
+            stopPolling();
+            if (j.audioBase64) {
+              const bytes = Uint8Array.from(atob(j.audioBase64), (c) => c.charCodeAt(0));
+              const blob = new Blob([bytes], { type: j.mimeType ?? "audio/mpeg" });
+              audioBlobRef.current = blob;
+              audioRef.current = new Audio(URL.createObjectURL(blob));
+              setAudioUrl(audioRef.current.src);
+            }
+          } else if (j.status === "failed") {
+            stopPolling();
+          }
+        } catch {
           stopPolling();
+          setError("Lost connection while polling the job.");
         }
       }, 1_500);
     } catch {
@@ -153,6 +158,7 @@ export function LongFormPanel() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={10}
+                maxLength={MAX_CHARS}
                 placeholder="Paste your full script — an entire chapter or audiobook section…"
                 className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />

@@ -32,7 +32,11 @@ const GUEST_DAILY_STREAMS = 5;
 const streamCounts = new Map<string, number>();
 
 function consumeGuestStream(ip: string): boolean {
-  const key = `${ip}:${new Date().toISOString().slice(0, 10)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${ip}:${today}`;
+  if (streamCounts.size > 10_000) {
+    for (const k of streamCounts.keys()) if (!k.endsWith(`:${today}`)) streamCounts.delete(k);
+  }
   const used = streamCounts.get(key) ?? 0;
   if (used >= GUEST_DAILY_STREAMS) return false;
   streamCounts.set(key, used + 1);

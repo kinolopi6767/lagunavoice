@@ -5,6 +5,7 @@ import { getVoiceById } from "@/lib/tts/catalog";
 import { DEMO_MAX_CHARS, DEMO_STYLES, DEMO_VOICES } from "@/lib/tts/demo-voices";
 import { moderateText } from "@/lib/security/moderation";
 import { verifyTurnstileToken } from "@/lib/security/turnstile";
+import { clientIp } from "@/lib/http/client-ip";
 import { consumeDemoGeneration, getDemoRemaining } from "@/lib/rate-limit/demo";
 import { isProviderKillSwitched, providerWithinSpendCap } from "@/lib/ops/flags";
 
@@ -23,11 +24,6 @@ const DemoRequestSchema = z.object({
   style: z.string().default("neutral"),
   turnstileToken: z.string().optional(),
 });
-
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  return xff?.split(",")[0]?.trim() || request.headers.get("cf-connecting-ip") || "unknown";
-}
 
 export async function POST(request: Request) {
   const ip = clientIp(request);

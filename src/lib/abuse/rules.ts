@@ -35,7 +35,6 @@ const flags: AbuseFlag[] = [];
 const bans = new Map<string, Ban>();
 const moderationStrikes = new Map<string, number>();
 const velocity = new Map<string, VelocityCounter>();
-const seenFingerprints = new Map<string, string[]>(); // visitorId → accountIds
 
 const VELOCITY_WINDOW_MS = 60_000;
 const VELOCITY_LIMIT = 10; // generations per minute (R2)
@@ -96,10 +95,6 @@ export function recordModerationStrike(userId: string): void {
   }
 }
 
-export function moderationStrikeCount(userId: string): number {
-  return moderationStrikes.get(userId) ?? 0;
-}
-
 /**
  * R2 — generation velocity: >10/min → flag + throttle (429).
  * Deliberately does NOT auto-ban: legitimate burst use is common, and bans
@@ -126,20 +121,6 @@ export function checkGenerationVelocity(key: string, userId?: string): boolean {
     return true;
   }
   return false;
-}
-
-/** R3 — same device fingerprint on >2 accounts → flag/block */
-export function recordFingerprint(visitorId: string, accountId: string): void {
-  const accounts = seenFingerprints.get(visitorId) ?? [];
-  if (!accounts.includes(accountId)) accounts.push(accountId);
-  seenFingerprints.set(visitorId, accounts);
-  if (accounts.length > 2) {
-    flag({ userId: accountId, rule: "R3", severity: "high", evidence: { visitorId, accounts } });
-  }
-}
-
-export function accountCountForFingerprint(visitorId: string): number {
-  return seenFingerprints.get(visitorId)?.length ?? 0;
 }
 
 /** R7 — chargeback: suspend account + evidence pack */

@@ -91,11 +91,6 @@ export function updateConsentVoiceId(userId: string, sampleHash: string, voiceId
     .find((c) => c.userId === userId && c.voiceId === "pending" && c.sampleHash === sampleHash);
   if (record) record.voiceId = voiceId;
 }
-
-export function consentForVoice(voiceId: string): ConsentRecord | undefined {
-  return consents.find((c) => c.voiceId === voiceId);
-}
-
 /** per-user clone attempt cap (5 attempts/hour — failed clones still cost provider time) */
 const cloneAttempts = new Map<string, number[]>();
 

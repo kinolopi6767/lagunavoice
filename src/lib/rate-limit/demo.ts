@@ -45,11 +45,3 @@ export function consumeDemoGeneration(ip: string): { allowed: boolean; remaining
   entry.count += 1;
   return { allowed: true, remaining: DAILY_LIMIT - entry.count };
 }
-
-/** periodic cleanup so the map does not grow unbounded */
-export function pruneDemoStore(): void {
-  const key = todayKey();
-  for (const [ip, entry] of store) {
-    if (entry.date !== key) store.delete(ip);
-  }
-}

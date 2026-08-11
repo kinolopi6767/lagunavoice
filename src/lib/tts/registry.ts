@@ -26,7 +26,3 @@ export function getProvider(name: ProviderName): TtsProvider {
 export function listProviders(): TtsProvider[] {
   return [...providers.values()];
 }
-
-export function isProviderEnabled(name: ProviderName): boolean {
-  return providers.has(name);
-}

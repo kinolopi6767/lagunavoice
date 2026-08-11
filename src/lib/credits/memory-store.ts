@@ -1,4 +1,4 @@
-import { SIGNUP_BONUS_CREDITS, REFERRAL_BONUS_CREDITS } from "@/lib/pricing/packs";
+import { REFERRAL_BONUS_CREDITS } from "@/lib/pricing/packs";
 
 /**
  * In-memory credit store — used until the Postgres database is configured
@@ -83,13 +83,6 @@ export function memoryApply(userId: string, amount: number, entry: Omit<LedgerEn
 export function memoryLedgerHistory(userId: string, limit = 50): LedgerEntry[] {
   return ledger.filter((e) => e.userId === userId).slice(-limit).reverse();
 }
-
-export function memoryGrantSignupBonus(userId: string): number {
-  const balance = memoryGetBalance(userId);
-  if (balance > 0) return balance; // only once
-  return memoryApply(userId, SIGNUP_BONUS_CREDITS, { type: "signup_bonus", description: "signup bonus" });
-}
-
 export function memoryGrantReferralBonus(userId: string, referrerId: string): void {
   memoryApply(referrerId, REFERRAL_BONUS_CREDITS, {
     type: "referral_bonus",

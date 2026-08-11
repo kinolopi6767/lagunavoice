@@ -52,21 +52,3 @@ export function consumeFreeChars(key: string, chars: number, opts?: { guest?: bo
   return { allowed: true, remainingChars: EDGE_DAILY_CHARS - entry.chars };
 }
 
-/** consume a generation slot for guests (no session) */
-export function consumeGuestGeneration(key: string): CapResult {
-  const entry = getEntry(key);
-  if (entry.generations >= GUEST_DAILY_GENERATIONS) {
-    return { allowed: false, remainingChars: 0, reason: "daily_generation_limit" };
-  }
-  entry.generations += 1;
-  return { allowed: true, remainingChars: EDGE_DAILY_CHARS - entry.chars };
-}
-
-export function getFreeRemainingChars(key: string): number {
-  const entry = getEntry(key);
-  return Math.max(0, EDGE_DAILY_CHARS - entry.chars);
-}
-
-export function freeDailyLimit(): number {
-  return EDGE_DAILY_CHARS;
-}
