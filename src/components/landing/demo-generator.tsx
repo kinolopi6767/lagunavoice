@@ -102,7 +102,7 @@ export function DemoGenerator() {
   const selectedVoice = DEMO_VOICES.find((v) => v.id === voiceId);
 
   return (
-    <Card className="w-full rounded-[calc(var(--radius)+1px)] border-0 shadow-none">
+    <Card className="w-full rounded-[calc(1rem-1px)] border-0 shadow-none">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-xl">
           <span className="flex size-5 items-center justify-center rounded-md bg-gradient-to-br from-grad-a to-grad-b">

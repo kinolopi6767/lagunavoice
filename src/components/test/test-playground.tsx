@@ -730,12 +730,10 @@ export function TestPlayground() {
                   <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs">{verifyOut}</pre>
                 )}
                 {activeKey && (
-                  <div className="rounded-md border bg-muted/30 p-3 font-mono text-xs">
-                    <p className="text-muted-foreground"># sample request using the active key</p>
-                    <p>{`curl -X POST ${origin}/api/v1/tts/generations \\`}</p>
-                    <p>{`  -H "Authorization: Bearer ${activeKey.key.slice(0, 10)}…" \\`}</p>
-                    <p>{`  -H "Content-Type: application/json" \\`}</p>
-                    <p>{`  -d '{"text":"Hello","voice":"${effectiveVoiceId ?? "fs_voice_edge_en-US-AriaNeural"}"}'`}</p>
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <pre className="overflow-x-auto whitespace-pre font-mono text-xs">
+                      <code>{`# sample request using the active key\ncurl -X POST ${origin}/api/v1/tts/generations \\\n  -H "Authorization: Bearer ${activeKey.key.slice(0, 10)}…" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Hello","voice":"${effectiveVoiceId ?? "fs_voice_edge_en-US-AriaNeural"}"}'`}</code>
+                    </pre>
                   </div>
                 )}
               </div>
@@ -749,7 +747,7 @@ export function TestPlayground() {
         <h2 className="mb-3 text-lg font-semibold">3 · TTS — quick generation &amp; long-form</h2>
         <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
           {/* voice column */}
-          <Card>
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle className="text-lg">Voice</CardTitle>
               <CardDescription>
@@ -870,8 +868,9 @@ export function TestPlayground() {
 
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
-                  <Label>Style</Label>
+                  <Label htmlFor="test-style">Style</Label>
                   <select
+                    id="test-style"
                     value={style}
                     onChange={(e) => setStyle(e.target.value)}
                     className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
@@ -893,7 +892,7 @@ export function TestPlayground() {
                     step={0.05}
                     value={rate}
                     onChange={(e) => setRate(Number(e.target.value))}
-                    className="w-full"
+                    className="w-full focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
                   />
                 </div>
                 <div className="space-y-2">
@@ -906,7 +905,7 @@ export function TestPlayground() {
                     step={1}
                     value={pitch}
                     onChange={(e) => setPitch(Number(e.target.value))}
-                    className="w-full"
+                    className="w-full focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
                   />
                 </div>
               </div>

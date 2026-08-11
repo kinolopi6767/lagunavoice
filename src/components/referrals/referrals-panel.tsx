@@ -255,7 +255,7 @@ export function ReferralsPanel() {
                   key={c.refereeId + c.claimedAt}
                   className="flex items-center justify-between rounded-md border p-3 text-sm"
                 >
-                  <span className="font-mono text-xs">{c.refereeId}</span>
+                  <span className="min-w-0 break-all font-mono text-xs">{c.refereeId}</span>
                   <span className="text-xs text-muted-foreground">
                     {new Date(c.claimedAt).toLocaleDateString(undefined, {
                       day: "numeric",

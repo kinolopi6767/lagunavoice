@@ -219,6 +219,7 @@ export function AdminDashboard() {
                   className="w-28"
                   value={grantAmount}
                   onChange={(e) => setGrantAmount(e.target.value)}
+                  aria-label="Credits to grant"
                 />
                 <Button onClick={grant} disabled={!grantEmail.trim()}>
                   Grant credits

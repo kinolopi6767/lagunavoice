@@ -200,7 +200,7 @@ export function CloneStudio() {
             <div className="rounded-md border bg-muted/40 p-4">
               <p className="font-medium">{clonedVoice.name}</p>
               <p className="text-xs text-muted-foreground">
-                {clonedVoice.id} · Typecast ssfm-v30 · 2,500 credits charged
+                <span className="break-all">{clonedVoice.id}</span> · Typecast ssfm-v30 · 2,500 credits charged
               </p>
               <audio
                 controls

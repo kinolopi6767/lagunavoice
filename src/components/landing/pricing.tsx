@@ -55,7 +55,7 @@ export function Pricing() {
                 : "rounded-2xl border"
             }
           >
-            <Card className={p.highlighted ? "h-full rounded-[calc(var(--radius)+1px)] border-0 shadow-none" : "h-full"}>
+            <Card className={p.highlighted ? "h-full rounded-[calc(1rem-1px)] border-0 shadow-none" : "h-full"}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle>{p.name}</CardTitle>

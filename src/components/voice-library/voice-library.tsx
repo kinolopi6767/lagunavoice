@@ -108,7 +108,7 @@ function VoiceCard({
             >
               {tierLabel}
             </Badge>
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+            <span className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/70">
               {voice.provider}
             </span>
           </div>
@@ -214,7 +214,7 @@ export function VoiceLibrary() {
             type="button"
             onClick={() => applyFilters(() => setTier(t.id))}
             className={cn(
-              "rounded-full border px-3 py-1.5 text-sm transition-colors",
+              "rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
               tier === t.id
                 ? "border-transparent bg-gradient-to-br from-grad-a to-grad-b text-white shadow-sm shadow-grad-b/30"
                 : "border-border hover:bg-muted",
@@ -227,7 +227,7 @@ export function VoiceLibrary() {
           type="button"
           onClick={() => applyFilters(() => setShowFavorites((v) => !v))}
           className={cn(
-            "ml-auto flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors",
+            "ml-auto flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
             showFavorites
               ? "border-transparent bg-gradient-to-br from-grad-a to-grad-b text-white shadow-sm shadow-grad-b/30"
               : "border-border hover:bg-muted",
@@ -243,11 +243,13 @@ export function VoiceLibrary() {
           placeholder="Search voices…"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+          aria-label="Search voices"
         />
         <select
           value={language}
           onChange={(e) => applyFilters(() => setLanguage(e.target.value))}
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+          aria-label="Filter by language"
+          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <option value="">All languages</option>
           {languages.map((l) => (
@@ -259,7 +261,8 @@ export function VoiceLibrary() {
         <select
           value={gender}
           onChange={(e) => applyFilters(() => setGender(e.target.value))}
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+          aria-label="Filter by gender"
+          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <option value="">All genders</option>
           <option value="male">Male</option>

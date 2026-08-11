@@ -149,7 +149,7 @@ export function VoicePicker({
                 }
               }}
               className={cn(
-                "flex-1 rounded-md px-2 py-1.5 text-xs font-medium capitalize transition-colors",
+                "flex-1 rounded-md px-2 py-1.5 text-xs font-medium capitalize transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
                 activeTier === t ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
               aria-pressed={activeTier === t}
@@ -217,7 +217,7 @@ export function VoicePicker({
                   onClick={() => togglePreview(v)}
                   aria-label={`Preview ${v.name}`}
                   className={cn(
-                    "flex size-7 shrink-0 items-center justify-center rounded-full text-xs transition-colors",
+                    "flex size-7 shrink-0 items-center justify-center rounded-full text-xs transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
                     playingId === v.id
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted hover:bg-secondary",

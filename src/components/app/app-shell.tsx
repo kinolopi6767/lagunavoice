@@ -52,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Button variant="outline" size="sm" asChild>
                 <Link href="/login">Sign in</Link>
               </Button>
-              <Button size="sm" asChild>
+              <Button size="sm" className="hidden sm:inline-flex" asChild>
                 <Link href="/signup">Sign up</Link>
               </Button>
             </div>
@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
 
-          <nav className="hidden items-center gap-0.5 text-sm text-muted-foreground md:flex md:px-6 md:pb-2">
+          <nav className="hidden items-center gap-0.5 text-sm text-muted-foreground md:flex md:overflow-x-auto md:px-6 md:pb-2 [scrollbar-width:none] md:[&::-webkit-scrollbar]:hidden">
             {NAV_LINKS.map((l) => (
               <Link
                 key={l.href}
