@@ -161,19 +161,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // 5. Consent attestation — recorded only after all guards pass, and bound
-  //    to the SERVER-computed SHA-256 of the actual sample (client-sent
-  //    hashes are ignored — they must match the content that was cloned).
+  // 5. Content hash — bound to the SERVER-computed SHA-256 of the actual
+  //    sample (client-sent hashes are ignored; must match what was cloned).
   const contentHash = `sha256:${createHash("sha256").update(sample).digest("hex")}`;
-  recordConsent({
-    userId,
-    voiceId: "pending", // bound to the real clone id after success (updateConsentVoiceId)
-    sampleHash: contentHash,
-    attestation: `I attest I own the rights to this voice sample and consent to it being cloned. (${new Date().toISOString()})`,
-    language,
-    ip: clientIp(request),
-    userAgent: request.headers.get("user-agent") ?? undefined,
-  });
 
   // 6. Bill credits (refunded if the clone fails)
   const generationId = crypto.randomUUID();
@@ -188,6 +178,18 @@ export async function POST(request: Request) {
     }
     throw err;
   }
+
+  // 6b. Consent attestation — recorded only after the debit succeeds, so a
+  //     rejected payment never leaves an unbound "pending" consent row.
+  recordConsent({
+    userId,
+    voiceId: "pending", // bound to the real clone id after success (updateConsentVoiceId)
+    sampleHash: contentHash,
+    attestation: `I attest I own the rights to this voice sample and consent to it being cloned. (${new Date().toISOString()})`,
+    language,
+    ip: clientIp(request),
+    userAgent: request.headers.get("user-agent") ?? undefined,
+  });
 
   // 7. Clone via Typecast
   try {
@@ -211,7 +213,7 @@ export async function POST(request: Request) {
     };
 
     registerCustomVoice(voice, userId, contentHash);
-    updateConsentVoiceId(contentHash, publicId);
+    updateConsentVoiceId(userId, contentHash, publicId);
 
     // slotsRemaining() already reflects the registered clone — no -1
     return NextResponse.json(

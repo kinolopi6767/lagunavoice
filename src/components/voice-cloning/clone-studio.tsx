@@ -65,7 +65,7 @@ export function CloneStudio() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sampleBase64,
-          sampleMime: file!.type,
+          sampleMime: file!.type || "audio/mpeg",
           name: name.trim(),
           consent: true,
         }),

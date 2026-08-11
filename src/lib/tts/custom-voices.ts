@@ -80,9 +80,15 @@ export function recordConsent(record: Omit<ConsentRecord, "createdAt">): void {
   consents.push({ ...record, createdAt: Date.now() });
 }
 
-/** bind the pending consent to the real clone voice id once it exists */
-export function updateConsentVoiceId(sampleHash: string, voiceId: string): void {
-  const record = consents.find((c) => c.voiceId === "pending" && c.sampleHash === sampleHash);
+/**
+ * Bind the pending consent to the real clone voice id once it exists.
+ * Scoped by userId + hash: two users cloning the same sample must never
+ * have their consents rebound to each other's clone.
+ */
+export function updateConsentVoiceId(userId: string, sampleHash: string, voiceId: string): void {
+  const record = [...consents]
+    .reverse()
+    .find((c) => c.userId === userId && c.voiceId === "pending" && c.sampleHash === sampleHash);
   if (record) record.voiceId = voiceId;
 }
 

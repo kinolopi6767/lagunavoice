@@ -45,12 +45,14 @@ export function VoicePicker({
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/voices?limit=${withTabs ? 200 : limit}&tier=${withTabs ? "all" : tier}`)
-      .then((r) => r.json() as Promise<{ voices: VoiceRecord[] }>)
+      .then((r) => (r.ok ? (r.json() as Promise<{ voices: VoiceRecord[] }>) : null))
       .then((d) => {
         if (cancelled) return;
-        setVoices(d.voices);
+        const loaded = Array.isArray(d?.voices) ? d.voices : [];
+        setVoices(loaded);
+        if (!d) setError("Could not load the voice list.");
         // never auto-select a paid voice for a guest
-        const fallback = d.voices.find((v) => v.tier === "free") ?? d.voices[0];
+        const fallback = loaded.find((v) => v.tier === "free") ?? loaded[0];
         if (fallback && !value) onSelect(fallback.id);
       })
       .catch(() => {

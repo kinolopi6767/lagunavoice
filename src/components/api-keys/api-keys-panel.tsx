@@ -53,12 +53,24 @@ export function ApiKeysPanel() {
   const [name, setName] = useState("");
   const [newKey, setNewKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unauthorized, setUnauthorized] = useState(false);
   const [loading, setLoading] = useState(true);
 
   function load() {
     fetch("/api/keys")
-      .then((r) => r.json() as Promise<{ keys: KeyRecord[] }>)
-      .then((d) => setKeys(d.keys))
+      .then(async (r) => {
+        if (r.status === 401) {
+          setUnauthorized(true);
+          return null;
+        }
+        if (!r.ok) throw new Error("load_failed");
+        const d = (await r.json()) as { keys?: KeyRecord[] } | null;
+        setUnauthorized(false);
+        return Array.isArray(d?.keys) ? d.keys : [];
+      })
+      .then((loaded) => {
+        if (loaded) setKeys(loaded);
+      })
       .catch(() => setError("Could not load keys."))
       .finally(() => setLoading(false));
   }
@@ -92,6 +104,30 @@ export function ApiKeysPanel() {
   }
 
   const activeKeys = keys.filter((k) => !k.revokedAt);
+
+  if (unauthorized) {
+    return (
+      <div className="space-y-6">
+        <Card className="mx-auto mt-10 max-w-md">
+          <CardContent className="space-y-4 p-6 text-center">
+            <p className="font-medium">Sign in to manage API keys</p>
+            <p className="text-sm text-muted-foreground">
+              Your developer keys live on your account. No auth configured yet? Use the test
+              playground to enter sandbox mode first.
+            </p>
+            <div className="flex justify-center gap-2">
+              <Button asChild>
+                <a href="/signup">Sign up</a>
+              </Button>
+              <Button variant="outline" asChild>
+                <a href="/test">Sandbox mode</a>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

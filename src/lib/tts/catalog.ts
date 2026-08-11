@@ -43,24 +43,46 @@ export interface SearchResult {
   total: number;
 }
 
+export class CatalogUnavailableError extends Error {
+  constructor() {
+    super("Voice catalog unavailable: all providers failed to sync.");
+    this.name = "CatalogUnavailableError";
+  }
+}
+
 /** fetch from all registered providers and normalize */
 async function fetchCatalog(): Promise<VoiceRecord[]> {
   const all: VoiceRecord[] = [];
+  let failures = 0;
   for (const provider of listProviders()) {
     try {
       const voices = await provider.listVoices();
       all.push(...voices);
     } catch (err) {
+      failures++;
       console.error(`[catalog] provider ${provider.name} sync failed`, err);
     }
   }
+  // Zero voices + total provider failure means the catalog is DOWN, not empty.
+  // Surface it as an error so clients can show a message instead of an
+  // empty library (and avoid caching an empty catalog for the full TTL).
+  if (all.length === 0 && failures > 0) {
+    throw new CatalogUnavailableError();
+  }
   return all.sort(voiceSort);
 }
+
+/** cooldown after a failed sync — fail fast instead of hammering providers */
+const FAIL_TTL_MS = 60 * 1000;
+let lastFailedAt = 0;
 
 /** ensure the catalog is loaded (memoized, concurrent-safe) */
 function ensureLoaded(): Promise<void> {
   if (state.voices.length > 0 && Date.now() - state.loadedAt < TTL_MS) {
     return Promise.resolve();
+  }
+  if (Date.now() - lastFailedAt < FAIL_TTL_MS) {
+    return Promise.reject(new CatalogUnavailableError());
   }
   if (state.loading) return state.loading;
 
@@ -68,6 +90,9 @@ function ensureLoaded(): Promise<void> {
     try {
       state.voices = await fetchCatalog();
       state.loadedAt = Date.now();
+    } catch (err) {
+      lastFailedAt = Date.now();
+      throw err;
     } finally {
       state.loading = null;
     }
@@ -100,7 +125,8 @@ export async function searchVoices(opts: SearchOptions = {}): Promise<SearchResu
   if (opts.gender) {
     voices = voices.filter((v) => v.gender === opts.gender);
   }
-  if (opts.tier) {
+  // "all" is a UI sentinel — skip the filter so it behaves like no tier
+  if (opts.tier && opts.tier !== "all") {
     voices = voices.filter((v) => v.tier === opts.tier);
   }
   if (opts.provider) {
