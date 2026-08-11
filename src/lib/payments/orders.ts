@@ -71,21 +71,29 @@ export function hasWebhookProcessed(webhookId: string): boolean {
  * Dedupe is recorded only AFTER the ledger credit succeeds, so a failed
  * credit leaves the webhook unprocessed and the order unmarked (retry-safe).
  */
+const confirmInFlight = new Set<string>();
+
 export async function confirmOrderPaid(orderId: string, opts?: { webhookId?: string }): Promise<CreditOrder | null> {
   const order = orders.get(orderId);
   if (!order) return null;
   if (order.status === "paid" || (opts?.webhookId && processedWebhooks.has(opts.webhookId))) return order;
+  if (confirmInFlight.has(orderId)) return order;
 
-  const balance = await credit(order.userId, order.credits, `pack: ${order.packSlug} (${order.credits.toLocaleString()} credits)`);
-  void balance;
+  confirmInFlight.add(orderId);
+  try {
+    const balance = await credit(order.userId, order.credits, `pack: ${order.packSlug} (${order.credits.toLocaleString()} credits)`);
+    void balance;
 
-  order.status = "paid";
-  order.paidAt = Date.now();
-  if (opts?.webhookId) {
-    order.webhookId = opts.webhookId;
-    processedWebhooks.add(opts.webhookId);
+    order.status = "paid";
+    order.paidAt = Date.now();
+    if (opts?.webhookId) {
+      order.webhookId = opts.webhookId;
+      processedWebhooks.add(opts.webhookId);
+    }
+    return order;
+  } finally {
+    confirmInFlight.delete(orderId);
   }
-  return order;
 }
 
 /**

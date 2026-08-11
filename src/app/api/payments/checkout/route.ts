@@ -22,7 +22,6 @@ const CheckoutSchema = z.object({
 export async function POST(request: Request) {
   // user session required (real session, or sandbox cookie without Supabase)
   const { userId, supabaseConfigured } = await resolveSession();
-  let email: string | undefined;
   if (!userId) {
     if (supabaseConfigured) {
       return NextResponse.json({ error: "Sign in to buy credits.", code: "unauthorized" }, { status: 401 });
@@ -63,7 +62,6 @@ export async function POST(request: Request) {
       amountPaise: amountInrPaise,
       description: `LugunaVoice ${product.name} — ${credits.toLocaleString()} credits`,
       orderId: order.id,
-      customerEmail: email,
     });
     setOrderRef(order.id, link.id);
     return NextResponse.json({ orderId: order.id, checkoutUrl: link.shortUrl, status: order.status });

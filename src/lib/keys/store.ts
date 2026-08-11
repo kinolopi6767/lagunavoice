@@ -85,13 +85,38 @@ export function hasScope(record: ApiKey, scope: string): boolean {
  * Idempotency — a used key stores the ORIGINAL result (generationId).
  * Replays return it instead of failing, so retries never double-charge.
  * Registered only AFTER the debit succeeds (see v1 route).
+ * Entries are pruned after 24h — a replayed key older than that is a new request.
  */
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyStoredAt = new Map<string, number>();
+
 export function getIdempotencyResult(idempotencyKey: string): string | undefined {
+  const at = idempotencyStoredAt.get(idempotencyKey);
+  if (at !== undefined && Date.now() - at > IDEMPOTENCY_TTL_MS) {
+    idempotencyResults.delete(idempotencyKey);
+    idempotencyStoredAt.delete(idempotencyKey);
+    return undefined;
+  }
   return idempotencyResults.get(idempotencyKey);
 }
 
 export function setIdempotencyResult(idempotencyKey: string, generationId: string): void {
+  if (idempotencyResults.size >= 10_000) {
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, t] of idempotencyStoredAt) {
+      if (t < oldestAt) {
+        oldestAt = t;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) {
+      idempotencyResults.delete(oldestKey);
+      idempotencyStoredAt.delete(oldestKey);
+    }
+  }
   idempotencyResults.set(idempotencyKey, generationId);
+  idempotencyStoredAt.set(idempotencyKey, Date.now());
 }
 
 /** token-bucket rate limit per key (rpm) — returns ms to wait (0 = allowed) */

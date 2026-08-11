@@ -39,6 +39,17 @@
           "error": { "type": "string" }
         }
       },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "plan": { "type": "string" },
+          "balance": { "type": "integer" },
+          "keyPrefix": { "type": "string" },
+          "rateLimitRpm": { "type": "integer" },
+          "recentLedger": { "type": "array", "items": { "type": "object", "properties": { "amount": { "type": "integer" }, "reason": { "type": "string" }, "at": { "type": "string" } } } }
+        }
+      },
       "Voice": {
         "type": "object",
         "properties": {
@@ -73,14 +84,13 @@
           { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" }, "description": "Send the same key on retries to avoid double-charging" }
         ],
         "responses": {
-          "202": { "description": "Accepted", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "status": { "type": "string" }, "estimatedCredits": { "type": "integer" } } } } } },
+          "202": { "description": "Accepted (or idempotent replay of a previous request with the same key)", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "status": { "type": "string" }, "estimatedCredits": { "type": "integer" } } } } } },
           "401": { "description": "Invalid API key", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "409": { "description": "Idempotency conflict" },
           "429": { "description": "Rate limited" }
         }
       }
     },
-    "/tts/generations/{id}": {
+    "/generations/{id}": {
       "get": {
         "summary": "Poll a generation until completed",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
@@ -108,7 +118,9 @@
     "/me": {
       "get": {
         "summary": "Account, key info, balance and recent ledger",
-        "responses": { "200": { "description": "Account snapshot" } }
+        "responses": {
+          "200": { "description": "Account snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } }
+        }
       }
     }
   }

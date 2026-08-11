@@ -1,16 +1,25 @@
 {
   "name": "@lugunavoice/sdk",
   "version": "0.1.0",
-  "description": "LugunaVoice developer SDK — text-to-speech with async generation, polling and idempotency.",
+  "description": "LugunaVoice developer SDK \u2014 text-to-speech with async generation, polling and idempotency.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepare": "npm run build"
   },
-  "keywords": ["tts", "text-to-speech", "voice", "ai", "lugunavoice"],
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "voice",
+    "ai",
+    "lugunavoice"
+  ],
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5"

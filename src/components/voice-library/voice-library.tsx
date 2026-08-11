@@ -142,7 +142,8 @@ export function VoiceLibrary() {
   const [voices, setVoices] = useState<VoiceRecord[]>([]);
   const [languages, setLanguages] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(""); // debounced search term (drives the fetch)
+  const [qInput, setQInput] = useState(""); // raw input, debounced into q
   const [language, setLanguage] = useState("");
   const [gender, setGender] = useState("");
   const [tier, setTier] = useState<string>("");
@@ -152,6 +153,11 @@ export function VoiceLibrary() {
   const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const requestSeq = useRef(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQ(qInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [qInput]);
 
   useEffect(() => {
     const seq = ++requestSeq.current;
@@ -235,8 +241,8 @@ export function VoiceLibrary() {
       <div className="grid gap-3 sm:grid-cols-3">
         <Input
           placeholder="Search voices…"
-          value={q}
-          onChange={(e) => applyFilters(() => setQ(e.target.value))}
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
         />
         <select
           value={language}
@@ -299,6 +305,7 @@ export function VoiceLibrary() {
                   onClick={() =>
                     applyFilters(() => {
                       setQ("");
+                      setQInput("");
                       setLanguage("");
                       setGender("");
                       setTier("");

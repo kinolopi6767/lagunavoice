@@ -44,9 +44,9 @@ export function CloneStudio() {
 
     try {
       const buffer = await file!.arrayBuffer();
-      if (buffer.byteLength > 25 * 1024 * 1024) {
+      if (buffer.byteLength > 3_200_000) {
         setStatus("error");
-        setError("Sample must be under 25 MB.");
+        setError("Sample must be under 3 MB (base64 JSON body limit).");
         return;
       }
       // chunked base64 — spreading a large Uint8Array into String.fromCharCode
@@ -109,7 +109,7 @@ export function CloneStudio() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="clone-file">Sample audio (WAV or MP3, 5–150s, ≤25 MB)</Label>
+            <Label htmlFor="clone-file">Sample audio (WAV or MP3, 5–150s, ≤3 MB)</Label>
             <label
               htmlFor="clone-file"
               className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed p-4 text-center transition-colors hover:bg-muted"
@@ -124,7 +124,7 @@ export function CloneStudio() {
               <span className="text-xs text-muted-foreground">
                 {file
                   ? `${formatBytes(file.size)} — click to replace`
-                  : "WAV or MP3 · 5–150 seconds · up to 25 MB"}
+                  : "WAV or MP3 · 5–150 seconds · up to 3 MB"}
               </span>
             </label>
             <input
@@ -138,7 +138,7 @@ export function CloneStudio() {
               }}
             />
             {file ? (
-              <p className="text-xs text-emerald-600">
+              <p className="text-xs text-primary">
                 Sample ready — name it, confirm consent, and clone.
               </p>
             ) : null}
@@ -149,7 +149,7 @@ export function CloneStudio() {
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
-              className="mt-0.5 size-4 shrink-0 accent-[oklch(0.52_0.22_264)]"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
             />
             <span className="leading-5 text-foreground">
               <span className="font-medium">Rights consent (required)</span> — I confirm I own
@@ -205,7 +205,7 @@ export function CloneStudio() {
                 src={`/api/voices/${clonedVoice.id}/preview`}
                 className="mt-2 w-full"
               />
-              <p className="mt-2 text-xs text-emerald-600">
+              <p className="mt-2 text-xs text-primary">
                 Clone created. Find it in the voice library and Studio — it speaks like the
                 sample, and generated speech bills at premium rates.
               </p>

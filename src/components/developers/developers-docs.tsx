@@ -125,7 +125,7 @@ export function DevelopersDocs() {
             {
               param: "text",
               type: "string · required",
-              desc: "The text to speak, up to 5,000 characters.",
+              desc: "The text to speak, up to 10,000 characters.",
             },
             {
               param: "voice",
@@ -201,8 +201,8 @@ export function DevelopersDocs() {
               <span
                 className={`shrink-0 self-start rounded px-1.5 py-0.5 text-xs font-medium ${
                   e.method === "GET"
-                    ? "bg-blue-500/10 text-blue-600"
-                    : "bg-emerald-500/10 text-emerald-600"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-primary/15 text-primary"
                 }`}
               >
                 {e.method}

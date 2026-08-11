@@ -172,7 +172,7 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
+      {message ? <p className="text-sm text-primary">{message}</p> : null}
 
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Admin</h1>

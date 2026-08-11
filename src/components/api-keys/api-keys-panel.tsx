@@ -157,8 +157,8 @@ export function ApiKeysPanel() {
             </Button>
           </div>
           {newKey ? (
-            <div className="rounded-md border border-emerald-600/40 bg-emerald-600/5 p-3">
-              <p className="text-xs font-medium text-emerald-700">
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+              <p className="text-xs font-medium text-primary">
                 Your new key (shown once — copy it now):
               </p>
               <div className="mt-2 flex items-start gap-2">

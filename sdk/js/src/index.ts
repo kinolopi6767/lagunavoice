@@ -101,11 +101,12 @@ export class LugunaVoice {
     if (opts.tier) params.set("tier", opts.tier);
     if (opts.limit) params.set("limit", String(opts.limit));
     if (opts.offset) params.set("offset", String(opts.offset));
-    return this.request<VoicePage>(`/voices?${params}`);
+    const query = params.toString();
+    return this.request<VoicePage>(query ? `/voices?${query}` : "/voices");
   }
 
   /** create a generation — returns the id to poll */
-  async generate(req: GenerationRequest, idempotencyKey?: string): Promise<{ id: string; status: string; estimatedCredits: number }> {
+  async generate(req: GenerationRequest, idempotencyKey?: string): Promise<{ id: string; status: string; estimatedCredits?: number }> {
     return this.request("/tts/generations", {
       method: "POST",
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
@@ -115,7 +116,7 @@ export class LugunaVoice {
 
   /** poll a generation */
   async getGeneration(id: string): Promise<Generation> {
-    return this.request<Generation>(`/tts/generations/${id}`);
+    return this.request<Generation>(`/generations/${id}`);
   }
 
   /**

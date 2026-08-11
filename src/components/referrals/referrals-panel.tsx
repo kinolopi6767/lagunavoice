@@ -205,7 +205,7 @@ export function ReferralsPanel() {
               </Button>
             </div>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
+            {message ? <p className="text-sm text-primary">{message}</p> : null}
           </CardContent>
         </Card>
 

@@ -203,7 +203,7 @@ export function BillingDashboard() {
         <p
           className={
             message.ok
-              ? "rounded-md border border-emerald-300/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400"
+              ? "rounded-md border border-primary/30 bg-primary/10 p-3 text-sm text-primary"
               : "rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
           }
         >
@@ -280,7 +280,7 @@ export function BillingDashboard() {
                   </div>
                   <span
                     className={`shrink-0 font-medium tabular-nums ${
-                      e.amount >= 0 ? "text-emerald-600" : "text-muted-foreground"
+                      e.amount >= 0 ? "text-primary" : "text-muted-foreground"
                     }`}
                   >
                     {e.amount >= 0 ? "+" : ""}

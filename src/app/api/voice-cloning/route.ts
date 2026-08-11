@@ -48,7 +48,7 @@ const CloneSchema = z.object({
 
 const MIN_DURATION_S = 5;
 const MAX_DURATION_S = 150;
-const MAX_SAMPLE_BYTES = 25 * 1_024 * 1_024;
+const MAX_SAMPLE_BYTES = 3_200_000;
 
 /** probe audio duration (seconds) using ffmpeg */
 async function probeDuration(sample: Buffer): Promise<number | null> {
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
   }
   if (sample.length > MAX_SAMPLE_BYTES) {
     return NextResponse.json(
-      { error: "Sample must be under 25 MB.", code: "sample_too_large" },
+      { error: "Sample must be under 3 MB (base64 JSON body limit).", code: "sample_too_large" },
       { status: 400 },
     );
   }

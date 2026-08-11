@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -155,6 +155,19 @@ export function TestPlayground() {
   const [pitch, setPitch] = useState(0);
   const [ttsStatus, setTtsStatus] = useState<"idle" | "busy" | "ready" | "error">("idle");
   const [ttsResult, setTtsResult] = useState<TtsResult | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const [origin] = useState<string>(() =>
+    typeof window === "undefined" ? "https://api.lugunavoice.com" : window.location.origin,
+  );
+
+  function commitResult(next: TtsResult | null) {
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    if (next?.kind === "audio") audioUrlRef.current = next.audioUrl ?? null;
+    setTtsResult(next);
+  }
 
   // 4 ─ credits / payments
   const [balance, setBalance] = useState<number | null>(null);
@@ -174,10 +187,14 @@ export function TestPlayground() {
     fetch("/api/dev/session")
       .then((res) => (res.ok ? (res.json() as Promise<DevStatus>) : null))
       .then((d) => {
-        if (!cancelled) setEnv({ loading: false, status: d });
+        if (cancelled) return;
+        setEnv((prev) => {
+          const stale = prev.status?.sandbox === true;
+          return { loading: false, status: stale ? prev.status : d };
+        });
       })
       .catch(() => {
-        if (!cancelled) setEnv({ loading: false, status: null });
+        if (!cancelled) setEnv((prev) => (prev.status?.sandbox === true ? prev : { loading: false, status: null }));
       });
     return () => {
       cancelled = true;
@@ -185,7 +202,7 @@ export function TestPlayground() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/voices?limit=100&tier=free")
+    fetch("/api/voices?limit=200&tier=all")
       .then((res) => (res.ok ? (res.json() as Promise<{ voices: VoiceOption[] }>) : null))
       .then((d) => {
         if (d?.voices?.length) {
@@ -362,11 +379,11 @@ export function TestPlayground() {
   async function generate() {
     if (!effectiveVoiceId || !text.trim()) return;
     setTtsStatus("busy");
-    setTtsResult(null);
+    commitResult(null);
     const trim = text.trim();
     if (trim.length > MAX_TEST_CHARS) {
       setTtsStatus("ready");
-      setTtsResult({ kind: "error", text: `Text too long (${trim.length} chars, max ${MAX_TEST_CHARS} for tests).` });
+      commitResult({ kind: "error", text: `Text too long (${trim.length} chars, max ${MAX_TEST_CHARS} for tests).` });
       return;
     }
 
@@ -379,10 +396,10 @@ export function TestPlayground() {
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.audioBase64) {
-          setTtsResult({ kind: "error", text: `Studio (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
+          commitResult({ kind: "error", text: `Studio (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
         } else {
           const bytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-          setTtsResult({
+          commitResult({
             kind: "audio",
             label: `Studio · ${data.tier ?? ""} · ${data.charCount ?? trim.length} chars`,
             meta: data.creditsCharged ? `${data.creditsCharged} credits charged` : "free (no credits)",
@@ -397,7 +414,7 @@ export function TestPlayground() {
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.jobId) {
-          setTtsResult({ kind: "error", text: `Long-form (${res.status}): ${data?.error ?? "no job returned"} [${data?.code ?? ""}]` });
+          commitResult({ kind: "error", text: `Long-form (${res.status}): ${data?.error ?? "no job returned"} [${data?.code ?? ""}]` });
         } else {
           for (let i = 0; i < 60; i++) {
             await new Promise((r) => setTimeout(r, 1_500));
@@ -405,7 +422,7 @@ export function TestPlayground() {
             const job = await poll.json().catch(() => null);
             if (job?.status === "completed" && job?.audioBase64) {
               const bytes = Uint8Array.from(atob(job.audioBase64), (c) => c.charCodeAt(0));
-              setTtsResult({
+              commitResult({
                 kind: "audio",
                 label: `Long-form · ${trim.length} chars`,
                 meta: "MP3 + SRT subtitles ready",
@@ -416,12 +433,12 @@ export function TestPlayground() {
               return;
             }
             if (job?.status === "failed") {
-              setTtsResult({ kind: "error", text: `Long-form failed: ${job.error ?? "unknown"}` });
+              commitResult({ kind: "error", text: `Long-form failed: ${job.error ?? "unknown"}` });
               setTtsStatus("ready");
               return;
             }
           }
-          setTtsResult({ kind: "error", text: "Long-form job timed out after ~90s (still processing server-side — check /admin or retry)." });
+          commitResult({ kind: "error", text: "Long-form job timed out after ~90s (still processing server-side — check /admin or retry)." });
         }
       } else if (mode === "stream") {
         const res = await fetch("/api/studio/stream", {
@@ -435,11 +452,11 @@ export function TestPlayground() {
         });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
-          setTtsResult({ kind: "error", text: `Stream (${res.status}): ${data?.error ?? "stream failed"} [${data?.code ?? ""}]` });
+          commitResult({ kind: "error", text: `Stream (${res.status}): ${data?.error ?? "stream failed"} [${data?.code ?? ""}]` });
         } else {
           const blob = await res.blob();
           const credits = res.headers.get("x-lv-credits") ?? "0";
-          setTtsResult({
+          commitResult({
             kind: "audio",
             label: `Stream · ${trim.length} chars`,
             meta: credits === "0" ? "guest free preview" : `${credits} credits (2/char, refunded on failure)`,
@@ -454,10 +471,10 @@ export function TestPlayground() {
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.audioBase64) {
-          setTtsResult({ kind: "error", text: `Demo (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
+          commitResult({ kind: "error", text: `Demo (${res.status}): ${data?.error ?? "no audio returned"} [${data?.code ?? ""}]` });
         } else {
           const bytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-          setTtsResult({
+          commitResult({
             kind: "audio",
             label: `Landing demo · ${trim.length} chars`,
             meta: data.remaining !== undefined ? `${data.remaining} demo generations left today` : undefined,
@@ -466,7 +483,7 @@ export function TestPlayground() {
         }
       } else if (mode === "v1") {
         if (!activeKey) {
-          setTtsResult({ kind: "error", text: "v1 API mode needs a key — create one in the API keys card (it saves to this browser automatically)." });
+          commitResult({ kind: "error", text: "v1 API mode needs a key — create one in the API keys card (it saves to this browser automatically)." });
         } else {
           const res = await fetch("/api/v1/tts/generations", {
             method: "POST",
@@ -475,7 +492,7 @@ export function TestPlayground() {
           });
           const data = await res.json().catch(() => null);
           if (!res.ok || !data?.id) {
-            setTtsResult({ kind: "error", text: `v1 (${res.status}): ${data?.error ?? "no generation returned"} [${data?.code ?? ""}]` });
+            commitResult({ kind: "error", text: `v1 (${res.status}): ${data?.error ?? "no generation returned"} [${data?.code ?? ""}]` });
           } else {
             for (let i = 0; i < 40; i++) {
               await new Promise((r) => setTimeout(r, 1_000));
@@ -485,7 +502,7 @@ export function TestPlayground() {
               const gen = await poll.json().catch(() => null);
               if (gen?.status === "completed" && gen?.audioBase64) {
                 const bytes = Uint8Array.from(atob(gen.audioBase64), (c) => c.charCodeAt(0));
-                setTtsResult({
+                commitResult({
                   kind: "audio",
                   label: `v1 API · ${data.id.slice(0, 14)}`,
                   meta: `${gen.creditsCharged ?? 0} credits · key "${activeKey.name}"`,
@@ -496,17 +513,17 @@ export function TestPlayground() {
                 return;
               }
               if (gen?.status === "failed") {
-                setTtsResult({ kind: "error", text: `v1 generation failed: ${gen.error ?? "unknown"} (refunded automatically)` });
+                commitResult({ kind: "error", text: `v1 generation failed: ${gen.error ?? "unknown"} (refunded automatically)` });
                 setTtsStatus("ready");
                 return;
               }
             }
-            setTtsResult({ kind: "error", text: "v1 generation timed out (still processing server-side)." });
+            commitResult({ kind: "error", text: "v1 generation timed out (still processing server-side)." });
           }
         }
       }
     } catch (err) {
-      setTtsResult({ kind: "error", text: `Request failed: ${(err as Error).message}` });
+      commitResult({ kind: "error", text: `Request failed: ${(err as Error).message}` });
     }
     setTtsStatus("ready");
   }
@@ -614,7 +631,7 @@ export function TestPlayground() {
                 <a className="underline" href="/referrals">/referrals</a>.
               </p>
             )}
-            {sandboxMsg && <p className="text-sm text-emerald-600">{sandboxMsg}</p>}
+            {sandboxMsg && <p className="text-sm text-primary">{sandboxMsg}</p>}
             {sandboxErr && <p className="text-sm text-destructive">{sandboxErr}</p>}
           </CardContent>
         </Card>
@@ -665,7 +682,7 @@ export function TestPlayground() {
               <Button variant="outline" onClick={addManualKey}>Save key (browser only)</Button>
             </div>
 
-            {keysMsg && <p className="text-sm text-emerald-600">{keysMsg}</p>}
+            {keysMsg && <p className="text-sm text-primary">{keysMsg}</p>}
             {keysErr && <p className="text-sm text-destructive">{keysErr}</p>}
 
             {savedKeys.length > 0 && (
@@ -684,7 +701,7 @@ export function TestPlayground() {
                         className="flex items-center gap-2 text-left"
                         title="Use this key for v1 calls in card 3"
                       >
-                        <span className={`size-2 rounded-full ${activeKey?.id === k.id ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                        <span className={`size-2 rounded-full ${activeKey?.id === k.id ? "bg-primary" : "bg-muted-foreground/40"}`} />
                         <span className="font-medium">{k.name}</span>
                       </button>
                       <Badge variant="secondary">browser (localStorage)</Badge>
@@ -715,7 +732,7 @@ export function TestPlayground() {
                 {activeKey && (
                   <div className="rounded-md border bg-muted/30 p-3 font-mono text-xs">
                     <p className="text-muted-foreground"># sample request using the active key</p>
-                    <p>{`curl -X POST http://localhost:3000/api/v1/tts/generations \\`}</p>
+                    <p>{`curl -X POST ${origin}/api/v1/tts/generations \\`}</p>
                     <p>{`  -H "Authorization: Bearer ${activeKey.key.slice(0, 10)}…" \\`}</p>
                     <p>{`  -H "Content-Type: application/json" \\`}</p>
                     <p>{`  -d '{"text":"Hello","voice":"${effectiveVoiceId ?? "fs_voice_edge_en-US-AriaNeural"}"}'`}</p>
@@ -831,7 +848,7 @@ export function TestPlayground() {
                 </div>
               )}
               {noDeepgram && mode === "stream" && (
-                <p className="text-sm text-amber-600">
+                <p className="text-sm text-muted-foreground">
                   Aura voices appear here once <code className="rounded bg-muted px-1">DEEPGRAM_API_KEY</code> is set —
                   without it, stream requests fail gracefully (503/404). That failure path is part of the test.
                 </p>
@@ -962,8 +979,8 @@ export function TestPlayground() {
               </Button>
             </div>
             {balance !== null && <p className="text-sm">Balance: <span className="font-medium">{balance.toLocaleString()}</span> credits.</p>}
-            {balanceMsg && <p className="text-sm text-emerald-600">{balanceMsg}</p>}
-            {orderMsg && <p className="text-sm text-emerald-600">{orderMsg}</p>}
+            {balanceMsg && <p className="text-sm text-primary">{balanceMsg}</p>}
+            {orderMsg && <p className="text-sm text-primary">{orderMsg}</p>}
             {orderErr && <p className="text-sm text-destructive">{orderErr}</p>}
           </CardContent>
         </Card>
